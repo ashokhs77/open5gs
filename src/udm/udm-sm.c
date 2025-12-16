@@ -38,6 +38,7 @@ void udm_state_operational(ogs_fsm_t *s, udm_event_t *e)
 {
     int rv;
     const char *api_version = NULL;
+    char *supi = NULL;
 
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
@@ -175,8 +176,12 @@ void udm_state_operational(ogs_fsm_t *s, udm_event_t *e)
             }
 
             if (!udm_ue) {
-                udm_ue = udm_ue_find_by_suci_or_supi(
-                        message.h.resource.component[0]);
+                supi = ogs_supi_from_supi_or_suci(
+                    message.h.resource.component[0]);
+                if (supi) {
+                    udm_ue = udm_ue_find_by_supi(supi);
+                }
+                ogs_free(supi);
                 if (!udm_ue) {
                     SWITCH(message.h.method)
                     CASE(OGS_SBI_HTTP_METHOD_POST)
@@ -295,15 +300,15 @@ void udm_state_operational(ogs_fsm_t *s, udm_event_t *e)
      * Guard against dispatching to an FSM that may have been finalized
      * by an asynchronous shutdown triggered by SIGTERM.
      *
-     * In init.c’s event_termination(), which can be invoked asynchronously
+     * In init.c?s event_termination(), which can be invoked asynchronously
      * when the process receives SIGTERM, we iterate over all NF instances:
      *     ogs_list_for_each(&ogs_sbi_self()->nf_instance_list, nf_instance)
      *         ogs_sbi_nf_fsm_fini(nf_instance);
-     * and call ogs_fsm_fini() on each instance’s FSM. That finalizes the FSM
+     * and call ogs_fsm_fini() on each instance?s FSM. That finalizes the FSM
      * and its state is reset to zero.
      *
-     * After event_termination(), any incoming SBI response—such as an NRF
-     * client callback arriving after deregistration—would otherwise be
+     * After event_termination(), any incoming SBI response?such as an NRF
+     * client callback arriving after deregistration?would otherwise be
      * dispatched into a dead FSM and trigger an assertion failure.
      *
      * To avoid this, we check OGS_FSM_STATE(&nf_instance->sm):

@@ -886,11 +886,9 @@ void mme_s11_handle_delete_session_response(
 
         GTP_COUNTER_CHECK(mme_ue, GTP_COUNTER_DELETE_SESSION_BY_TAU,
 
-            ogs_info("[%s] TAU accept(BCS mismatch)", mme_ue->imsi_bcd);
-            r = nas_eps_send_tau_accept(mme_ue,
-                    S1AP_ProcedureCode_id_downlinkNASTransport);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+            ogs_info("[%s] Send TAU accept(BCS match, active_flag=%d)",
+                     mme_ue->imsi_bcd, mme_ue->nas_eps.update.active_flag);
+            mme_send_tau_accept_and_check_release(enb_ue, mme_ue);
 
         );
 
@@ -1000,7 +998,10 @@ void mme_s11_handle_create_bearer_request(
 
     ogs_assert(sess);
     bearer = mme_bearer_add(sess);
-    ogs_assert(bearer);
+    if (!bearer) {
+        ogs_error("Failed to allocate bearer for sess %p, returning failure", sess);
+        return ;   
+    }
 
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
             mme_ue->mme_s11_teid, sgw_ue->sgw_s11_teid);
@@ -1057,14 +1058,18 @@ void mme_s11_handle_create_bearer_request(
 
     if (bearer->qos.mbr.downlink || bearer->qos.mbr.uplink ||
         bearer->qos.gbr.downlink || bearer->qos.gbr.uplink) {
-        if (bearer->qos.mbr.downlink == 0)
-            bearer->qos.mbr.downlink = MAX_BIT_RATE;
-        if (bearer->qos.mbr.uplink == 0)
-            bearer->qos.mbr.uplink = MAX_BIT_RATE;
-        if (bearer->qos.gbr.downlink == 0)
-            bearer->qos.gbr.downlink = MAX_BIT_RATE;
-        if (bearer->qos.gbr.uplink == 0)
-            bearer->qos.gbr.uplink = MAX_BIT_RATE;
+        if (bearer->qos.mbr.downlink == 0 ||
+            bearer->qos.mbr.downlink > OGS_MAX_BITRATE_S1AP)
+            bearer->qos.mbr.downlink = OGS_MAX_BITRATE_S1AP;
+        if (bearer->qos.mbr.uplink == 0 ||
+            bearer->qos.mbr.uplink > OGS_MAX_BITRATE_S1AP)
+            bearer->qos.mbr.uplink = OGS_MAX_BITRATE_S1AP;
+        if (bearer->qos.gbr.downlink == 0 ||
+            bearer->qos.gbr.downlink > OGS_MAX_BITRATE_S1AP)
+            bearer->qos.gbr.downlink = OGS_MAX_BITRATE_S1AP;
+        if (bearer->qos.gbr.uplink == 0 ||
+            bearer->qos.gbr.uplink > OGS_MAX_BITRATE_S1AP)
+            bearer->qos.gbr.uplink = OGS_MAX_BITRATE_S1AP;
     }
 
     /* Save Bearer TFT */

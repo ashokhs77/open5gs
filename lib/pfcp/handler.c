@@ -464,9 +464,11 @@ ogs_pfcp_pdr_t *ogs_pfcp_handle_create_pdr(ogs_pfcp_sess_t *sess,
     pdr = ogs_pfcp_pdr_find_or_add(sess, message->pdr_id.u16);
     ogs_assert(pdr);
 
-    if (message->precedence.presence) {
-        ogs_pfcp_pdr_reorder_by_precedence(pdr, message->precedence.u32);
-        pdr->precedence = message->precedence.u32;
+    if (message->far_id.presence == 0) {
+        ogs_error("No FAR-ID");
+        *cause_value = OGS_PFCP_CAUSE_MANDATORY_IE_MISSING;
+        *offending_ie_value = OGS_PFCP_FAR_ID_TYPE;
+        return NULL;
     }
 
     if (message->pdi.presence == 0) {
@@ -507,6 +509,33 @@ ogs_pfcp_pdr_t *ogs_pfcp_handle_create_pdr(ogs_pfcp_sess_t *sess,
                 }
             }
         }
+    }
+
+    for (i = 0; i < OGS_ARRAY_SIZE(message->urr_id); i++) {
+        if (message->urr_id[i].presence) {
+            if (!(message->urr_id[i].u32 > 0 &&
+                    message->urr_id[i].u32 <= OGS_MAX_NUM_OF_URR)) {
+                ogs_error("Invalid URR-ID %u (valid range: 1..%d) "
+                        "in PFCP message",
+                        message->urr_id[i].u32, OGS_MAX_NUM_OF_URR);
+                *cause_value = OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
+                *offending_ie_value = OGS_PFCP_URR_ID_TYPE;
+                return NULL;
+            }
+        }
+    }
+
+    pdr = ogs_pfcp_pdr_find_or_add(sess, message->pdr_id.u16);
+    if (!pdr) {
+        ogs_error("ogs_pfcp_pdr_find_or_add() failed");
+        *cause_value = OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
+        *offending_ie_value = OGS_PFCP_PDR_ID_TYPE;
+        return NULL;
+    }
+
+    if (message->precedence.presence) {
+        ogs_pfcp_pdr_reorder_by_precedence(pdr, message->precedence.u32);
+        pdr->precedence = message->precedence.u32;
     }
 
     pdr->src_if = message->pdi.source_interface.u8;
@@ -577,7 +606,14 @@ ogs_pfcp_pdr_t *ogs_pfcp_handle_create_pdr(ogs_pfcp_sess_t *sess,
                     sdf_filter.flow_description_len+1);
 
             rv = ogs_ipfw_compile_rule(&rule->ipfw, flow_description);
-            ogs_assert(rv == OGS_OK);
+
+            if (rv != OGS_OK) {
+                ogs_error("ogs_ipfw_compile_rule() failed [%s]",
+                        flow_description);
+                ogs_free(flow_description);
+                ogs_pfcp_rule_remove(rule);
+                continue;
+            }
 
             ogs_free(flow_description);
 /*
@@ -630,7 +666,11 @@ ogs_pfcp_pdr_t *ogs_pfcp_handle_create_pdr(ogs_pfcp_sess_t *sess,
             pdr->dnn = ogs_strdup(dnn);
             ogs_assert(pdr->dnn);
         } else {
-            ogs_error("Invalid pdi.network_instance");
+            ogs_error("Invalid pdi.network_instance [%d]",
+                    message->pdi.network_instance.len);
+            ogs_log_hexdump(OGS_LOG_ERROR,
+                    message->pdi.network_instance.data,
+                    message->pdi.network_instance.len);
         }
     }
 
@@ -641,10 +681,23 @@ ogs_pfcp_pdr_t *ogs_pfcp_handle_create_pdr(ogs_pfcp_sess_t *sess,
     pdr->f_teid_len = 0;
 
     if (message->pdi.local_f_teid.presence) {
+        if (!message->pdi.local_f_teid.len) {
+            ogs_error("No F-TEID LEN");
+            *cause_value = OGS_PFCP_CAUSE_INVALID_LENGTH;
+            *offending_ie_value = OGS_PFCP_F_TEID_TYPE;
+            return NULL;
+        }
         pdr->f_teid_len =
             ogs_min(message->pdi.local_f_teid.len, sizeof(pdr->f_teid));
         memcpy(&pdr->f_teid, message->pdi.local_f_teid.data, pdr->f_teid_len);
-        ogs_assert(pdr->f_teid.ipv4 || pdr->f_teid.ipv6);
+
+        if (!pdr->f_teid.ipv4 && !pdr->f_teid.ipv6) {
+            ogs_error("Invalid F-TEID ");
+            *cause_value = OGS_PFCP_CAUSE_INVALID_F_TEID_ALLOCATION_OPTION;
+            *offending_ie_value = OGS_PFCP_F_TEID_TYPE;
+            return NULL;
+        }
+
         pdr->f_teid.teid = be32toh(pdr->f_teid.teid);
     }
 
@@ -731,7 +784,12 @@ ogs_pfcp_pdr_t *ogs_pfcp_handle_create_pdr(ogs_pfcp_sess_t *sess,
 
     if (message->far_id.presence) {
         far = ogs_pfcp_far_find_or_add(sess, message->far_id.u32);
-        ogs_assert(far);
+        if (!far) {
+            ogs_error("ogs_pfcp_far_find_or_add() failed");
+            *cause_value = OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
+            *offending_ie_value = OGS_PFCP_FAR_ID_TYPE;
+            return NULL;
+        }
         ogs_pfcp_pdr_associate_far(pdr, far);
     }
 
@@ -741,7 +799,12 @@ ogs_pfcp_pdr_t *ogs_pfcp_handle_create_pdr(ogs_pfcp_sess_t *sess,
     for (i = 0; i < OGS_ARRAY_SIZE(message->urr_id); i++) {
         if (message->urr_id[i].presence) {
             urr = ogs_pfcp_urr_find_or_add(sess, message->urr_id[i].u32);
-            ogs_assert(urr);
+            if (!urr) {
+                ogs_error("ogs_pfcp_urr_find_or_add() failed");
+                *cause_value = OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
+                *offending_ie_value = OGS_PFCP_URR_ID_TYPE;
+                return NULL;
+            }
             ogs_pfcp_pdr_associate_urr(pdr,urr);
         }
     }
@@ -750,7 +813,12 @@ ogs_pfcp_pdr_t *ogs_pfcp_handle_create_pdr(ogs_pfcp_sess_t *sess,
 
     if (message->qer_id.presence) {
         qer = ogs_pfcp_qer_find_or_add(sess, message->qer_id.u32);
-        ogs_assert(qer);
+        if (!qer) {
+            ogs_error("ogs_pfcp_qer_find_or_add() failed");
+            *cause_value = OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
+            *offending_ie_value = OGS_PFCP_QER_ID_TYPE;
+            return NULL;
+        }
         ogs_pfcp_pdr_associate_qer(pdr, qer);
     }
 
@@ -928,7 +996,13 @@ ogs_pfcp_pdr_t *ogs_pfcp_handle_update_pdr(ogs_pfcp_sess_t *sess,
                         sdf_filter.flow_description_len+1);
 
                 rv = ogs_ipfw_compile_rule(&rule->ipfw, flow_description);
-                ogs_assert(rv == OGS_OK);
+                if (rv != OGS_OK) {
+                    ogs_error("ogs_ipfw_compile_rule() failed [%s]",
+                            flow_description);
+                    ogs_free(flow_description);
+                    ogs_pfcp_rule_remove(rule);
+                    continue;
+                }
 
                 ogs_free(flow_description);
     /*
@@ -979,7 +1053,11 @@ ogs_pfcp_pdr_t *ogs_pfcp_handle_update_pdr(ogs_pfcp_sess_t *sess,
                 pdr->dnn = ogs_strdup(dnn);
                 ogs_assert(pdr->dnn);
             } else {
-                ogs_error("Invalid pdi.network_instance");
+                ogs_error("Invalid pdi.network_instance [%d]",
+                        message->pdi.network_instance.len);
+                ogs_log_hexdump(OGS_LOG_ERROR,
+                        message->pdi.network_instance.data,
+                        message->pdi.network_instance.len);
             }
         }
 
@@ -1279,6 +1357,7 @@ ogs_pfcp_qer_t *ogs_pfcp_handle_create_qer(ogs_pfcp_sess_t *sess,
         ogs_pfcp_tlv_create_qer_t *message,
         uint8_t *cause_value, uint8_t *offending_ie_value)
 {
+    int rv;
     ogs_pfcp_qer_t *qer = NULL;
 
     ogs_assert(message);
@@ -1314,10 +1393,25 @@ ogs_pfcp_qer_t *ogs_pfcp_handle_create_qer(ogs_pfcp_sess_t *sess,
     memset(&qer->mbr, 0, sizeof(qer->mbr));
     memset(&qer->gbr, 0, sizeof(qer->gbr));
 
-    if (message->maximum_bitrate.presence)
-        ogs_pfcp_parse_bitrate(&qer->mbr, &message->maximum_bitrate);
-    if (message->guaranteed_bitrate.presence)
-        ogs_pfcp_parse_bitrate(&qer->gbr, &message->guaranteed_bitrate);
+    if (message->maximum_bitrate.presence) {
+        rv = ogs_pfcp_parse_bitrate(&qer->mbr, &message->maximum_bitrate);
+        if (rv != OGS_PFCP_BITRATE_LEN) {
+            ogs_error("MBR: ogs_pfcp_parse_bitrate() failed");
+            *cause_value = OGS_PFCP_CAUSE_INVALID_LENGTH;
+            *offending_ie_value = OGS_PFCP_MBR_TYPE;
+            return NULL;
+        }
+    }
+
+    if (message->guaranteed_bitrate.presence) {
+        rv = ogs_pfcp_parse_bitrate(&qer->gbr, &message->guaranteed_bitrate);
+        if (rv != OGS_PFCP_BITRATE_LEN) {
+            ogs_error("GBR: ogs_pfcp_parse_bitrate() failed");
+            *cause_value = OGS_PFCP_CAUSE_INVALID_LENGTH;
+            *offending_ie_value = OGS_PFCP_GBR_TYPE;
+            return NULL;
+        }
+    }
 
     qer->qfi = 0;
 
@@ -1331,6 +1425,7 @@ ogs_pfcp_qer_t *ogs_pfcp_handle_update_qer(ogs_pfcp_sess_t *sess,
         ogs_pfcp_tlv_update_qer_t *message,
         uint8_t *cause_value, uint8_t *offending_ie_value)
 {
+    int rv;
     ogs_pfcp_qer_t *qer = NULL;
 
     ogs_assert(message);
@@ -1354,10 +1449,24 @@ ogs_pfcp_qer_t *ogs_pfcp_handle_update_qer(ogs_pfcp_sess_t *sess,
         return NULL;
     }
 
-    if (message->maximum_bitrate.presence)
-        ogs_pfcp_parse_bitrate(&qer->mbr, &message->maximum_bitrate);
-    if (message->guaranteed_bitrate.presence)
-        ogs_pfcp_parse_bitrate(&qer->gbr, &message->guaranteed_bitrate);
+    if (message->maximum_bitrate.presence) {
+        rv = ogs_pfcp_parse_bitrate(&qer->mbr, &message->maximum_bitrate);
+        if (rv != OGS_PFCP_BITRATE_LEN) {
+            ogs_error("MBR: ogs_pfcp_parse_bitrate() failed");
+            *cause_value = OGS_PFCP_CAUSE_INVALID_LENGTH;
+            *offending_ie_value = OGS_PFCP_MBR_TYPE;
+            return NULL;
+        }
+    }
+    if (message->guaranteed_bitrate.presence) {
+        rv = ogs_pfcp_parse_bitrate(&qer->gbr, &message->guaranteed_bitrate);
+        if (rv != OGS_PFCP_BITRATE_LEN) {
+            ogs_error("GBR: ogs_pfcp_parse_bitrate() failed");
+            *cause_value = OGS_PFCP_CAUSE_INVALID_LENGTH;
+            *offending_ie_value = OGS_PFCP_GBR_TYPE;
+            return NULL;
+        }
+    }
 
     return qer;
 }
@@ -1548,9 +1657,15 @@ ogs_pfcp_urr_t *ogs_pfcp_handle_create_urr(ogs_pfcp_sess_t *sess,
     }
 
     if (message->dropped_dl_traffic_threshold.presence) {
-        ogs_pfcp_parse_dropped_dl_traffic_threshold(
+        decoded = ogs_pfcp_parse_dropped_dl_traffic_threshold(
                 &urr->dropped_dl_traffic_threshold,
                 &message->dropped_dl_traffic_threshold);
+        if (message->dropped_dl_traffic_threshold.len != decoded) {
+            ogs_error("Invalid Dropped DL Traffic Threshold");
+            *cause_value = OGS_PFCP_CAUSE_MANDATORY_IE_INCORRECT;
+            *offending_ie_value = OGS_PFCP_DROPPED_DL_TRAFFIC_THRESHOLD_TYPE;
+            return NULL;
+        }
     }
 
     if (message->quota_validity_time.presence) {
@@ -1655,9 +1770,15 @@ ogs_pfcp_urr_t *ogs_pfcp_handle_update_urr(ogs_pfcp_sess_t *sess,
     }
 
     if (message->dropped_dl_traffic_threshold.presence) {
-        ogs_pfcp_parse_dropped_dl_traffic_threshold(
+        decoded = ogs_pfcp_parse_dropped_dl_traffic_threshold(
                 &urr->dropped_dl_traffic_threshold,
                 &message->dropped_dl_traffic_threshold);
+        if (message->dropped_dl_traffic_threshold.len != decoded) {
+            ogs_error("Invalid Dropped DL Traffic Threshold");
+            *cause_value = OGS_PFCP_CAUSE_MANDATORY_IE_INCORRECT;
+            *offending_ie_value = OGS_PFCP_DROPPED_DL_TRAFFIC_THRESHOLD_TYPE;
+            return NULL;
+        }
     }
 
     if (message->quota_validity_time.presence) {

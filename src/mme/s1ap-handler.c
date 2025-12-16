@@ -1646,6 +1646,11 @@ void s1ap_handle_e_rab_setup_response(
 
     enb_ue_t *enb_ue = NULL;
     mme_ue_t *mme_ue = NULL;
+    sgw_ue_t *sgw_ue = NULL;
+
+    mme_sess_t *sess = NULL;
+    mme_bearer_t *bearer = NULL;
+    mme_bearer_t *linked_bearer = NULL;
 
     ogs_assert(enb);
     ogs_assert(enb->sctp.sock);
@@ -1740,8 +1745,6 @@ void s1ap_handle_e_rab_setup_response(
             S1AP_E_RABSetupItemBearerSUResIEs_t *item = NULL;
             S1AP_E_RABSetupItemBearerSURes_t *e_rab = NULL;
 
-            mme_bearer_t *bearer = NULL;
-
             item = (S1AP_E_RABSetupItemBearerSUResIEs_t *)
                 E_RABSetupListBearerSURes->list.array[i];
             if (!item) {
@@ -1817,7 +1820,7 @@ void s1ap_handle_e_rab_setup_response(
                     bearer->enb_s1u_ip.addr6, OGS_IPV6_LEN);
 
             if (OGS_FSM_CHECK(&bearer->sm, esm_state_active)) {
-                mme_bearer_t *linked_bearer = mme_linked_bearer(bearer);
+                linked_bearer = mme_linked_bearer(bearer);
                 ogs_assert(linked_bearer);
                 ogs_debug("    Linked-EBI[%d]", linked_bearer->ebi);
 
@@ -1838,13 +1841,16 @@ void s1ap_handle_e_rab_setup_response(
     }
 
     if (E_RABFailedToSetupListBearerSURes) {
-        ogs_debug("E_RABFailedToSetupListBearerSURes");
+        ogs_warn("E_RABFailedToSetupListBearerSURes");
         for (i = 0; i < E_RABFailedToSetupListBearerSURes->list.count; i++) {
-            S1AP_E_RABItem_t *item = (S1AP_E_RABItem_t *)
+            S1AP_E_RABItemIEs_t *item = NULL;
+            S1AP_E_RABItem_t *e_rab = NULL;
+
+            item = (S1AP_E_RABItemIEs_t *)
                 E_RABFailedToSetupListBearerSURes->list.array[i];
 
             if (!item) {
-                ogs_error("No S1AP_E_RABItem_t");
+                ogs_error("No S1AP_E_RABItemIEs_t");
                 r = s1ap_send_error_indication2(mme_ue,
                         S1AP_Cause_PR_protocol,
                         S1AP_CauseProtocol_semantic_error);
@@ -1853,9 +1859,44 @@ void s1ap_handle_e_rab_setup_response(
                 return;
             }
 
-            ogs_debug("RAB_ID: %d", (int)item->e_RAB_ID);
-            ogs_debug("    Cause[Group:%d Cause:%d]",
-                (int)item->cause.present, (int)item->cause.choice.radioNetwork);
+            e_rab = &item->value.choice.E_RABItem;
+
+            ogs_warn("RAB_ID: %x", (int)e_rab->e_RAB_ID);
+            ogs_warn("    Cause[Group:%d Cause:%d]",
+                (int)e_rab->cause.present,
+                (int)e_rab->cause.choice.radioNetwork);
+
+            bearer = mme_bearer_find_by_ue_ebi(mme_ue, e_rab->e_RAB_ID);
+            if (!bearer) {
+                ogs_error("No Bearer [%d]", (int)e_rab->e_RAB_ID);
+                r = s1ap_send_error_indication2(mme_ue,
+                        S1AP_Cause_PR_radioNetwork,
+                        S1AP_CauseRadioNetwork_unknown_E_RAB_ID);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+                return;
+            }
+
+            linked_bearer = mme_linked_bearer(bearer);
+            ogs_assert(linked_bearer);
+            ogs_debug("    Linked-EBI[%d]", linked_bearer->ebi);
+
+            if (bearer->ebi == linked_bearer->ebi) {
+                sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+                ogs_assert(sgw_ue);
+
+                sess = mme_sess_find_by_id(bearer->sess_id);
+                ogs_assert(sess);
+
+                /* Radio failure cleanup:
+                 * delete session without E-RAB release procedure */
+                ogs_assert(OGS_OK ==
+                    mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess,
+                        OGS_GTP_DELETE_NO_ACTION));
+                ogs_warn("Delete Session Request");
+            } else {
+                ogs_error("Not implemented : remove dedicated bearer");
+            }
         }
     }
 
@@ -2117,7 +2158,7 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
         CLEAR_MME_UE_ALL_TIMERS(mme_ue);
 
         if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_registered)) {
-            ogs_debug("Mobile Reachable timer started for IMSI[%s]",
+            ogs_info("Mobile Reachable timer started for IMSI[%s]",
                 mme_ue->imsi_bcd);
         /*
          * TS 24.301
@@ -3230,46 +3271,6 @@ void s1ap_handle_enb_configuration_transfer(
     }
 }
 
-/* Check whether an enb (mme_enb_t) has a valid S1 transport address.
- * This uses the SCTP socket stored in mme_enb_t.sctp.sock and calls
- * getpeername() on the socket fd to obtain the peer sockaddr.
- */
-static bool enb_has_valid_s1_addr(mme_enb_t *enb) {
-    if (!enb) return false;
-
-    /* Ensure an SCTP socket object exists */
-    if (!enb->sctp.sock) return false;
-
-    /* Obtain the underlying fd. The project wraps sockets, so adjust if names differ. */
-    int fd = -1;
-#if defined(OGS_HAS_SCTP_SOCK_FD)
-    /* If your ogs_sctp_sock_t exposes a sock pointer with fd member */
-    fd = enb->sctp.sock->fd;
-#else
-    /* Fallback: assume same layout (many trees use enb->sctp.sock->fd) */
-    fd = enb->sctp.sock->fd;
-#endif
-    if (fd < 0) return false;
-
-    struct sockaddr_storage peer;
-    socklen_t len = sizeof(peer);
-    if (getpeername(fd, (struct sockaddr *)&peer, &len) != 0) {
-        /* couldn't get peer address (socket not connected / error) */
-        return false;
-    }
-
-    if (peer.ss_family == AF_INET) {
-        struct sockaddr_in *a = (struct sockaddr_in *)&peer;
-        if (a->sin_addr.s_addr == INADDR_ANY) return false;
-        return true;
-    } else if (peer.ss_family == AF_INET6) {
-        /* For IPv6, accept any non-empty family (no simple IN6ADDR_ANY check here) */
-        return true;
-    }
-
-    return false;
-}
-
 static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
                 S1AP_Cause_t *Cause, S1AP_TargetID_t *TargetID,
                 S1AP_Source_ToTarget_TransparentContainer_t *Source_ToTarget_TransparentContainer)
@@ -3292,19 +3293,22 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
         break;
     default:
         ogs_error("Not implemented(%d)", TargetID->present);
-        (void)s1ap_send_handover_preparation_failure(
-                source_ue, S1AP_Cause_PR_protocol,
-                S1AP_CauseProtocol_semantic_error);
-        return; /* stop here */
+        r = s1ap_send_handover_preparation_failure(source_ue,
+                S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return;
     }
 
     target_enb = mme_enb_find_by_enb_id(target_enb_id);
     if (target_enb == NULL) {
         ogs_error("Handover required : cannot find target eNB-id[0x%x]",
                     target_enb_id);
-        (void)s1ap_send_handover_preparation_failure(
-                source_ue, S1AP_Cause_PR_radioNetwork,
+        r = s1ap_send_handover_preparation_failure(source_ue,
+                S1AP_Cause_PR_radioNetwork,
                 S1AP_CauseRadioNetwork_unknown_targetID);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3316,9 +3320,28 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
 
     if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
         ogs_error("No Security Context");
-        (void)s1ap_send_handover_preparation_failure(
-                source_ue, S1AP_Cause_PR_nas,
-                S1AP_CauseNas_authentication_failure);
+        r = s1ap_send_handover_preparation_failure(source_ue,
+                S1AP_Cause_PR_nas, S1AP_CauseNas_authentication_failure);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return;
+    }
+
+    if (!SESSION_CONTEXT_IS_AVAILABLE(mme_ue)) {
+        ogs_error("No Session Context : IMSI[%s]", mme_ue->imsi_bcd);
+        r = s1ap_send_handover_preparation_failure(source_ue,
+                S1AP_Cause_PR_nas, S1AP_CauseNas_authentication_failure);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return;
+    }
+
+    if (!ACTIVE_EPS_BEARERS_IS_AVAIABLE(mme_ue)) {
+        ogs_error("No active EPS bearers : IMSI[%s]", mme_ue->imsi_bcd);
+        r = s1ap_send_handover_preparation_failure(source_ue,
+                S1AP_Cause_PR_nas, S1AP_CauseNas_authentication_failure);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3327,29 +3350,11 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
     mme_ue->nhcc++;
     ogs_kdf_nh_enb(mme_ue->kasme, mme_ue->nh, mme_ue->nh);
 
-    /* ---- PRECHECK: target eNB must be reachable and have an S1 address ---- */
-    if (!target_enb->sctp.sock) {
-        ogs_warn("Abort HO: target eNB SCTP socket missing");
-        (void)s1ap_send_handover_preparation_failure(
-                source_ue, S1AP_Cause_PR_transport,
-                S1AP_CauseTransport_transport_resource_unavailable);
-        return;
-    }
-    if (!enb_has_valid_s1_addr(target_enb)) {
-        ogs_warn("Abort HO: target eNB has no valid S1 address");
-        (void)s1ap_send_handover_preparation_failure(
-                source_ue, S1AP_Cause_PR_transport,
-                S1AP_CauseTransport_transport_resource_unavailable);
-        return;
-    }
-
     r = s1ap_send_handover_request(
             source_ue, target_enb, &source_ue->handover_type, Cause,
             Source_ToTarget_TransparentContainer);
-    if (r != OGS_OK) {
-        ogs_warn("s1ap_send_handover_request failed — already sent/handled failure");
-        return;
-    }
+    ogs_expect(r == OGS_OK);
+    ogs_assert(r != OGS_ERROR);
 }
 
 void s1ap_handle_handover_required(mme_enb_t *enb, ogs_s1ap_message_t *message)

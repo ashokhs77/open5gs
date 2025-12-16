@@ -210,6 +210,12 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             break;
         case OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE:
             if (!gtp2_message.h.teid_presence) ogs_error("No TEID");
+            if (!sess) {
+                ogs_error("No Session");
+                rv = ogs_gtp_xact_commit(gtp_xact);
+                ogs_expect(rv == OGS_OK);
+                break;
+            }
             smf_s5c_handle_create_bearer_response(
                 sess, gtp_xact, &gtp2_message.create_bearer_response);
             break;
@@ -841,15 +847,15 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
      * Guard against dispatching to an FSM that may have been finalized
      * by an asynchronous shutdown triggered by SIGTERM.
      *
-     * In init.c’s event_termination(), which can be invoked asynchronously
+     * In init.c?s event_termination(), which can be invoked asynchronously
      * when the process receives SIGTERM, we iterate over all NF instances:
      *     ogs_list_for_each(&ogs_sbi_self()->nf_instance_list, nf_instance)
      *         ogs_sbi_nf_fsm_fini(nf_instance);
-     * and call ogs_fsm_fini() on each instance’s FSM. That finalizes the FSM
+     * and call ogs_fsm_fini() on each instance?s FSM. That finalizes the FSM
      * and its state is reset to zero.
      *
-     * After event_termination(), any incoming SBI response—such as an NRF
-     * client callback arriving after deregistration—would otherwise be
+     * After event_termination(), any incoming SBI response?such as an NRF
+     * client callback arriving after deregistration?would otherwise be
      * dispatched into a dead FSM and trigger an assertion failure.
      *
      * To avoid this, we check OGS_FSM_STATE(&nf_instance->sm):
@@ -1097,7 +1103,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
  * the session is active on UE, RAN, and SMF before applying QoS updates.
  *
  * Home-Routed Roaming: trigger PDU Session Modification at step 13
- * immediately after H-SMF’s CreateSMContext response and H-UPF N4 setup
+ * immediately after H-SMF?s CreateSMContext response and H-UPF N4 setup
  * to apply QoS updates without waiting for V-SMF or RAN setup.
  */
                 smf_qos_flow_binding(sess);
@@ -1115,10 +1121,10 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
  * Normally, step 11 (SMContextStatusNotify) informs the AMF that the SM
  * Context has been released, and SMF would then delete the session state.
  * However, if the AMF triggers a release while a new establishment is still
- * underway (the PFCP Modification and NAS Registration in steps 16a–16c),
+ * underway (the PFCP Modification and NAS Registration in steps 16a?16c),
  * deleting the context too early causes those procedures to fail.
  *
- * To avoid this race, we defer step 11 until after steps 12–15 complete:
+ * To avoid this race, we defer step 11 until after steps 12?15 complete:
  * subscription termination, policy cleanup, and UDM deregistration. This
  * delay allows both the old (released) context and the new (establishing)
  * context to coexist in SMF, so that PFCP and NAS messages can still find
@@ -1127,7 +1133,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
  *
  * This ensures:
  *  - PFCP Modification (step 16a) still locates its context
- *  - NAS Registration (steps 16b–16c) can finish successfully
+ *  - NAS Registration (steps 16b?16c) can finish successfully
  *  - The final cleanup (deferred step 11) does not interrupt any in-flight
  *    procedures
  *
