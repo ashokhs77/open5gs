@@ -36,7 +36,7 @@ ogs_pkbuf_t *sgwc_sxa_build_session_establishment_request(
     ogs_pfcp_f_seid_t f_seid;
     int len;
 
-    ogs_debug("Session Establishment Request");
+    ogs_info("Session Establishment Request");
     ogs_assert(sess);
 
     pfcp_message = ogs_calloc(1, sizeof(*pfcp_message));
@@ -135,13 +135,18 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
     int num_of_update_far = 0;
 
     uint64_t modify_flags = 0;
+    int total = 0;
 
-    ogs_debug("Session Modification Request");
+    ogs_info("Session Modification Request");
 
     ogs_assert(sess);
     ogs_assert(xact);
     modify_flags = xact->modify_flags;
     ogs_assert(modify_flags);
+    ogs_info("PFCP Session Modification build start: "
+            "sess_id=%d xact=%p flags=0x%llx bearer_to_modify_count=%d",
+            sess->id, xact, (unsigned long long)modify_flags,
+            ogs_list_count(&xact->bearer_to_modify_list));
 
     pfcp_message = ogs_calloc(1, sizeof(*pfcp_message));
     if (!pfcp_message) {
@@ -157,11 +162,7 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
 
     ogs_list_for_each_entry(
             &xact->bearer_to_modify_list, bearer, to_modify_node) {
-        ogs_debug("EBI[%d]", bearer->ebi);
         ogs_list_for_each(&bearer->tunnel_list, tunnel) {
-            ogs_debug("TUNNEL[%d] INF[%d] modify flags %llx",
-                    tunnel->id, tunnel->interface_type,
-                    (long long)modify_flags);
             if (((modify_flags &
                   (OGS_PFCP_MODIFY_DL_ONLY|
                    OGS_PFCP_MODIFY_UL_ONLY|
@@ -191,7 +192,6 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                         message->pdr_id.u16 = pdr->id;
 
                         num_of_remove_pdr++;
-                        ogs_debug("num_of_remove_pdr = %d", num_of_remove_pdr);
                     } else
                         ogs_assert_if_reached();
 
@@ -205,7 +205,6 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                         message->far_id.u32 = far->id;
 
                         num_of_remove_far++;
-                        ogs_debug("num_of_remove_far = %d", num_of_remove_far);
                     } else
                         ogs_assert_if_reached();
 
@@ -217,7 +216,6 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                                 &req->create_pdr[num_of_create_pdr],
                                 num_of_create_pdr, pdr);
                         num_of_create_pdr++;
-                        ogs_debug("num_of_create_pdr = %d", num_of_create_pdr);
 
                         ogs_list_add(&xact->pdr_to_create_list,
                                         &pdr->to_create_node);
@@ -231,7 +229,6 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                                 num_of_create_far, far);
 
                         num_of_create_far++;
-                        ogs_debug("num_of_create_far = %d", num_of_create_far);
                     } else
                         ogs_assert_if_reached();
                 }
@@ -245,7 +242,6 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                                 num_of_update_far, far);
 
                         num_of_update_far++;
-                        ogs_debug("num_of_update_far = %d", num_of_update_far);
                     } else
                         ogs_assert_if_reached();
 
@@ -262,7 +258,6 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                                 num_of_update_far, far);
 
                         num_of_update_far++;
-                        ogs_debug("num_of_update_far = %d", num_of_update_far);
 
                         /* Clear all FAR flags */
                         tunnel->far->smreq_flags.value = 0;
@@ -279,7 +274,6 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                                 &req->update_pdr[num_of_update_pdr],
                                 num_of_update_pdr, pdr, modify_flags);
                         num_of_update_pdr++;
-                        ogs_debug("num_of_update_pdr = %d", num_of_update_pdr);
                     } else
                         ogs_assert_if_reached();
                 }
@@ -287,8 +281,19 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
         }
     }
 
-    ogs_assert(num_of_remove_pdr + num_of_remove_far + num_of_create_pdr +
-            num_of_create_far + num_of_update_pdr + num_of_update_far);
+    total = num_of_remove_pdr + num_of_remove_far + num_of_create_pdr +
+            num_of_create_far + num_of_update_pdr + num_of_update_far;
+
+    if (!total) {
+        ogs_error("PFCP Session Modification build invalid state: "
+                "sess_id=%d xact=%p flags=0x%llx remove_pdr=%d remove_far=%d "
+                "create_pdr=%d create_far=%d update_pdr=%d update_far=%d",
+                sess->id, xact, (unsigned long long)modify_flags,
+                num_of_remove_pdr, num_of_remove_far,
+                num_of_create_pdr, num_of_create_far,
+                num_of_update_pdr, num_of_update_far);
+        ogs_assert_if_reached();
+    }
 
     pfcp_message->h.type = type;
     pkbuf = ogs_pfcp_build_msg(pfcp_message);
@@ -309,7 +314,7 @@ ogs_pkbuf_t *sgwc_sxa_build_session_deletion_request(
     ogs_pfcp_message_t *pfcp_message = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
 
-    ogs_debug("Session Deletion Request");
+    ogs_info("Session Deletion Request");
     ogs_assert(sess);
 
     pfcp_message = ogs_calloc(1, sizeof(*pfcp_message));

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 by Sukchan Lee <acetcom@gmail.com>
+ * Copyright (C) 2019-2026 by Sukchan Lee <acetcom@gmail.com>
  *
  * This file is part of Open5GS.
  *
@@ -127,16 +127,16 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         }
         e->gtp_xact_id = gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID;
 
-        if (gtp2_message.h.teid_presence && gtp2_message.h.teid != 0) {
+        if (gtp2_message.h.teid_presence && gtp2_message.h.teid != 0)
             sess = smf_sess_find_by_teid(gtp2_message.h.teid);
-        } else if (gtp_xact->local_teid) { /* rx no TEID or TEID=0 */
+
+        if (!sess && gtp_xact->local_teid) /* rx no TEID or TEID=0 */
             /* 3GPP TS 29.274 5.5.2: we receive TEID=0 under some
              * conditions, such as cause "Session context not found". In those
              * cases, we still want to identify the local session which
              * originated the message, so try harder by using the TEID we
              * locally stored in xact when sending the original request: */
             sess = smf_sess_find_by_teid(gtp_xact->local_teid);
-        }
 
         switch(gtp2_message.h.type) {
         case OGS_GTP2_ECHO_REQUEST_TYPE:
@@ -847,15 +847,15 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
      * Guard against dispatching to an FSM that may have been finalized
      * by an asynchronous shutdown triggered by SIGTERM.
      *
-     * In init.c?s event_termination(), which can be invoked asynchronously
+     * In init.c’s event_termination(), which can be invoked asynchronously
      * when the process receives SIGTERM, we iterate over all NF instances:
      *     ogs_list_for_each(&ogs_sbi_self()->nf_instance_list, nf_instance)
      *         ogs_sbi_nf_fsm_fini(nf_instance);
-     * and call ogs_fsm_fini() on each instance?s FSM. That finalizes the FSM
+     * and call ogs_fsm_fini() on each instance’s FSM. That finalizes the FSM
      * and its state is reset to zero.
      *
-     * After event_termination(), any incoming SBI response?such as an NRF
-     * client callback arriving after deregistration?would otherwise be
+     * After event_termination(), any incoming SBI response—such as an NRF
+     * client callback arriving after deregistration—would otherwise be
      * dispatched into a dead FSM and trigger an assertion failure.
      *
      * To avoid this, we check OGS_FSM_STATE(&nf_instance->sm):
@@ -1103,7 +1103,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
  * the session is active on UE, RAN, and SMF before applying QoS updates.
  *
  * Home-Routed Roaming: trigger PDU Session Modification at step 13
- * immediately after H-SMF?s CreateSMContext response and H-UPF N4 setup
+ * immediately after H-SMF’s CreateSMContext response and H-UPF N4 setup
  * to apply QoS updates without waiting for V-SMF or RAN setup.
  */
                 smf_qos_flow_binding(sess);
@@ -1121,10 +1121,10 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
  * Normally, step 11 (SMContextStatusNotify) informs the AMF that the SM
  * Context has been released, and SMF would then delete the session state.
  * However, if the AMF triggers a release while a new establishment is still
- * underway (the PFCP Modification and NAS Registration in steps 16a?16c),
+ * underway (the PFCP Modification and NAS Registration in steps 16a–16c),
  * deleting the context too early causes those procedures to fail.
  *
- * To avoid this race, we defer step 11 until after steps 12?15 complete:
+ * To avoid this race, we defer step 11 until after steps 12–15 complete:
  * subscription termination, policy cleanup, and UDM deregistration. This
  * delay allows both the old (released) context and the new (establishing)
  * context to coexist in SMF, so that PFCP and NAS messages can still find
@@ -1133,7 +1133,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
  *
  * This ensures:
  *  - PFCP Modification (step 16a) still locates its context
- *  - NAS Registration (steps 16b?16c) can finish successfully
+ *  - NAS Registration (steps 16b–16c) can finish successfully
  *  - The final cleanup (deferred step 11) does not interrupt any in-flight
  *    procedures
  *

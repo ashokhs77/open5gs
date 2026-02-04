@@ -72,7 +72,7 @@ static void ngap_build_plmn_support_list(NGAP_PLMNSupportList_t *PLMNSupportList
 
 ogs_pkbuf_t *ngap_build_ng_setup_response(void)
 {
-    int i, j;
+    int i;
 
     NGAP_NGAP_PDU_t pdu;
     NGAP_SuccessfulOutcome_t *successfulOutcome = NULL;
@@ -172,43 +172,7 @@ ogs_pkbuf_t *ngap_build_ng_setup_response(void)
 
     *RelativeAMFCapacity = amf_self()->relative_capacity;
 
-    for (i = 0; i < amf_self()->num_of_plmn_support; i++) {
-        NGAP_PLMNSupportItem_t *NGAP_PLMNSupportItem = NULL;
-        NGAP_PLMNIdentity_t *pLMNIdentity = NULL;
-        NGAP_SliceSupportList_t *sliceSupportList = NULL;
-
-        NGAP_PLMNSupportItem = (NGAP_PLMNSupportItem_t *)
-                CALLOC(1, sizeof(NGAP_PLMNSupportItem_t));
-        pLMNIdentity = &NGAP_PLMNSupportItem->pLMNIdentity;
-        sliceSupportList = &NGAP_PLMNSupportItem->sliceSupportList;
-
-        ogs_asn_buffer_to_OCTET_STRING(
-                &amf_self()->plmn_support[i].plmn_id,
-                OGS_PLMN_ID_LEN, pLMNIdentity);
-        for (j = 0; j < amf_self()->plmn_support[i].num_of_s_nssai; j++) {
-            NGAP_SliceSupportItem_t *NGAP_SliceSupportItem = NULL;
-            NGAP_S_NSSAI_t *s_NSSAI = NULL;
-            NGAP_SST_t *sST = NULL;
-
-            NGAP_SliceSupportItem = (NGAP_SliceSupportItem_t *)
-                    CALLOC(1, sizeof(NGAP_SliceSupportItem_t));
-            s_NSSAI = &NGAP_SliceSupportItem->s_NSSAI;
-            sST = &s_NSSAI->sST;
-
-            ogs_asn_uint8_to_OCTET_STRING(
-                amf_self()->plmn_support[i].s_nssai[j].sst, sST);
-            if (amf_self()->plmn_support[i].s_nssai[j].sd.v !=
-                    OGS_S_NSSAI_NO_SD_VALUE) {
-                s_NSSAI->sD = CALLOC(1, sizeof(NGAP_SD_t));
-                ogs_asn_uint24_to_OCTET_STRING(
-                    amf_self()->plmn_support[i].s_nssai[j].sd, s_NSSAI->sD);
-            }
-
-            ASN_SEQUENCE_ADD(&sliceSupportList->list, NGAP_SliceSupportItem);
-        }
-
-        ASN_SEQUENCE_ADD(&PLMNSupportList->list, NGAP_PLMNSupportItem);
-    }
+    ngap_build_plmn_support_list(PLMNSupportList);
 
     return ogs_ngap_encode(&pdu);
 }

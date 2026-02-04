@@ -19,10 +19,10 @@
 
 /*
  * Connected PDUs JSON dumper for the Prometheus HTTP server (/pdu-info).
- * - 5G PDUs:  psi+dnn, snssai, qos_flows [{qfi,5qi}], pdu_state ("active"/"inactive"/"unknown")
+ * - 5G PDUs:  psi+dnn, snssai, qos_flows [{qfi,5qi}], n3.{gnb,upf}, handover{}, pdu_state
  * - LTE PDUs: ebi(+psi if non-zero)+apn, qos_flows [{ebi,qci}], pdu_state ("unknown" at SMF scope)
- * - UE-level: ue_activity ("active" if any PDU active; "unknown" if none active but any unknown; else "idle")
- * - pager: /pdu-info?page=0&page_size=100 (0-based, page=-1 without paging) Default: page=0 page_size=100=MAXSIZE
+ * - UE-level: ue_activity ("active"/"unknown"/"idle")
+ * - pager: /pdu-info?page=0&page_size=100 (0-based, page=SIZE_MAX -> no paging)
  *
  * path: http://SMF_IP:9090/pdu-info
  *

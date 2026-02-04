@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2024 by Sukchan Lee <acetcom@gmail.com>
+ * Copyright (C) 2019-2026 by Sukchan Lee <acetcom@gmail.com>
  *
  * This file is part of Open5GS.
  *
@@ -272,7 +272,10 @@ void mme_s11_handle_create_session_response(
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
         }
-        mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+        if (enb_ue)
+            mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+        else
+            ogs_error("No S1 Context");
         return;
     }
 
@@ -330,7 +333,10 @@ void mme_s11_handle_create_session_response(
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
         }
-        mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+        if (enb_ue)
+            mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+        else
+            ogs_error("No S1 Context");
         return;
     }
 
@@ -362,7 +368,11 @@ void mme_s11_handle_create_session_response(
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
             }
-            mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+            if (enb_ue)
+                mme_send_delete_session_or_mme_ue_context_release(
+                        enb_ue, mme_ue);
+            else
+                ogs_error("No S1 Context");
             return;
         }
     }
@@ -382,7 +392,10 @@ void mme_s11_handle_create_session_response(
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
         }
-        mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+        if (enb_ue)
+            mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+        else
+            ogs_error("No S1 Context");
         return;
     }
 
@@ -421,7 +434,11 @@ void mme_s11_handle_create_session_response(
         bearer = mme_bearer_find_by_ue_ebi(mme_ue,
                 rsp->bearer_contexts_created[i].eps_bearer_id.u8);
         if (!bearer) {
-            mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+            if (enb_ue)
+                mme_send_delete_session_or_mme_ue_context_release(
+                        enb_ue, mme_ue);
+            else
+                ogs_error("No S1 Context");
             return;
         }
 
@@ -729,11 +746,6 @@ void mme_s11_handle_delete_session_response(
         return;
     }
 
-    if (!enb_ue) {
-        ogs_error("ENB-S1 Context has already been removed");
-        return;
-    }
-
     if (!mme_ue) {
         ogs_error("MME-UE Context has already been removed");
         return;
@@ -883,6 +895,11 @@ void mme_s11_handle_delete_session_response(
     } else if (action == OGS_GTP_DELETE_SEND_TAU_ACCEPT) {
 
         MME_SESS_CLEAR(sess);
+
+        if (!enb_ue) {
+            ogs_error("ENB-S1 Context has already been removed");
+            return;
+        }
 
         GTP_COUNTER_CHECK(mme_ue, GTP_COUNTER_DELETE_SESSION_BY_TAU,
 
@@ -1705,10 +1722,8 @@ void mme_s11_handle_downlink_data_notification(
  *   included in Downlink Data Notification is "Error Indication received
  *   from RNC/eNodeB/S4-SGSN"
  */
-            enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-            ogs_assert(enb_ue);
-
-            r = s1ap_send_ue_context_release_command(enb_ue,
+            r = s1ap_send_ue_context_release_command(
+                    enb_ue_find_by_id(mme_ue->enb_ue_id),
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                     S1AP_UE_CTX_REL_S1_PAGING, 0);
             ogs_expect(r == OGS_OK);
@@ -1780,7 +1795,10 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-        mme_send_delete_session_or_mme_ue_context_release(source_ue, mme_ue);
+        if (source_ue)
+            mme_send_delete_session_or_mme_ue_context_release(source_ue, mme_ue);
+        else
+            ogs_error("ENB-S1 Context has already been removed");
         return;
     }
 
@@ -1795,7 +1813,10 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-        mme_send_delete_session_or_mme_ue_context_release(source_ue, mme_ue);
+        if (source_ue)
+            mme_send_delete_session_or_mme_ue_context_release(source_ue, mme_ue);
+        else
+            ogs_error("ENB-S1 Context has already been removed");
         return;
     }
 
@@ -1806,7 +1827,11 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
 
     if (session_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
         ogs_error("[%s] GTP Cause [VALUE:%d]", mme_ue->imsi_bcd, session_cause);
-        mme_send_delete_session_or_mme_ue_context_release(source_ue, mme_ue);
+        if (source_ue)
+            mme_send_delete_session_or_mme_ue_context_release(
+                    source_ue, mme_ue);
+        else
+            ogs_error("ENB-S1 Context has already been removed");
         return;
     }
 
