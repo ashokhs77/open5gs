@@ -3743,8 +3743,6 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     }
     mme_ue->gn.gtp_xact_id = OGS_INVALID_POOL_ID;
 
-    mme_ebi_pool_init(mme_ue);
-
     ogs_list_init(&mme_ue->sess_list);
 
     /* Set MME-S11-TEID */
@@ -3855,8 +3853,6 @@ void mme_ue_remove(mme_ue_t *mme_ue)
 
     mme_sess_remove_all(mme_ue);
     mme_session_remove_all(mme_ue);
-
-    mme_ebi_pool_final(mme_ue);
 
     ogs_pool_free(&mme_s11_teid_pool, mme_ue->mme_s11_teid_node);
     ogs_pool_free(&mme_gn_teid_pool, mme_ue->gn.mme_gn_teid_node);
@@ -4168,10 +4164,12 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
                 ogs_list_for_each(&old_sess->bearer_list, old_bearer) {
                     old_bearer->mme_ue_id = mme_ue->id;
 
-                    if (old_bearer->ebi_node)
-                        ogs_pool_free(
-                                &old_mme_ue->ebi_pool, old_bearer->ebi_node);
-                    old_bearer->ebi_node = NULL;
+                    if (mme_ebi_reserve(mme_ue, old_bearer->ebi) == OGS_OK)
+                        ogs_info("Bearer reserved (EBI=%d IMSI=%s)",
+                                old_bearer->ebi, mme_ue->imsi_bcd);
+                    else
+                        ogs_error("Failed to reserve bearer (EBI=%d IMSI=%s)",
+                                old_bearer->ebi, mme_ue->imsi_bcd);
                 }
                 old_sess->mme_ue_id = mme_ue->id;
             }
