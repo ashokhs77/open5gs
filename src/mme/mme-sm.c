@@ -723,7 +723,7 @@ cleanup:
                     /* Now that the UE has been
                      * validated we can send the 
                      * Update Location Request to HSS */
-                    mme_s6a_send_ulr(enb_ue, mme_ue);
+                    mme_s6a_send_ulr(enb_ue, mme_ue, 0);
                 }
                 break;
             default:
