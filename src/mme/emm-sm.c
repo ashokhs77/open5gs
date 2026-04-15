@@ -1422,7 +1422,7 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
                 mme_s13_send_ecr(mme_ue);
             }
             else {
-                mme_s6a_send_ulr(enb_ue, mme_ue);
+            	mme_s6a_send_ulr(enb_ue, mme_ue, 0);
             }
             
 
