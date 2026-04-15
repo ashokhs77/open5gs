@@ -28,10 +28,6 @@
 #include "s1ap-build.h"
 #include "s1ap-path.h"
 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-
 int s1ap_open(void)
 {
     ogs_socknode_t *node = NULL;
@@ -735,47 +731,6 @@ int s1ap_send_handover_cancel_ack(enb_ue_t *source_ue)
 }
 
 
-/* Check whether an enb (mme_enb_t) has a valid S1 transport address.
- * This uses the SCTP socket stored in mme_enb_t.sctp.sock and calls
- * getpeername() on the socket fd to obtain the peer sockaddr.
- */
-static bool enb_has_valid_s1_addr(mme_enb_t *enb) {
-    if (!enb) return false;
-
-    /* Ensure an SCTP socket object exists */
-    if (!enb->sctp.sock) return false;
-
-    /* Obtain the underlying fd. The project wraps sockets, so adjust if names differ. */
-    int fd = -1;
-#if defined(OGS_HAS_SCTP_SOCK_FD)
-    /* If your ogs_sctp_sock_t exposes a sock pointer with fd member */
-    fd = enb->sctp.sock->fd;
-#else
-    /* Fallback: assume same layout (many trees use enb->sctp.sock->fd) */
-    fd = enb->sctp.sock->fd;
-#endif
-    if (fd < 0) return false;
-
-    struct sockaddr_storage peer;
-    socklen_t len = sizeof(peer);
-    if (getpeername(fd, (struct sockaddr *)&peer, &len) != 0) {
-        /* couldn't get peer address (socket not connected / error) */
-        return false;
-    }
-
-    if (peer.ss_family == AF_INET) {
-        struct sockaddr_in *a = (struct sockaddr_in *)&peer;
-        if (a->sin_addr.s_addr == INADDR_ANY) return false;
-        return true;
-    } else if (peer.ss_family == AF_INET6) {
-        /* For IPv6, accept any non-empty family (no simple IN6ADDR_ANY check here) */
-        return true;
-    }
-
-    return false;
-}
-
-
 int s1ap_send_handover_request(
         enb_ue_t *source_ue, mme_enb_t *target_enb,
         S1AP_HandoverType_t *handovertype, S1AP_Cause_t *cause,
@@ -853,41 +808,6 @@ int s1ap_send_handover_request(
             source_ue->enb_ue_s1ap_id, source_ue->mme_ue_s1ap_id);
     ogs_info("    Target : ENB_UE_S1AP_ID[Unknown] MME_UE_S1AP_ID[%d]",
             target_ue->mme_ue_s1ap_id);
-			
-    /*
-     * Pre-check: ensure the target eNB is reachable and has a valid transport
-     * address before we attempt to build/send HandoverRequest.
-     *
-     * If the checks fail we send a HandoverPreparationFailure back to the
-     * source eNB (controlled failure) instead of proceeding and risking
-     * ASN.1 encoding/assertion crashes.
-     */
-    if (!target_enb) {
-        ogs_warn("Abort HO: target_enb is NULL");
-        s1ap_send_handover_preparation_failure(
-                source_ue, S1AP_Cause_PR_transport,
-                S1AP_CauseTransport_transport_resource_unavailable);
-        return OGS_ERROR;
-    }
-
-    /* SCTP socket must be valid / connected */
-    if (!target_enb->sctp.sock || target_enb->sctp.sock->fd == INVALID_SOCKET) {
-        ogs_warn("Abort HO: target eNB SCTP not connected (enb_id=%d)", target_enb->enb_id);
-        s1ap_send_handover_preparation_failure(
-                source_ue, S1AP_Cause_PR_transport,
-                S1AP_CauseTransport_transport_resource_unavailable);
-        return OGS_ERROR;
-    }
-
-    /* Validate the transport address (IPv4/IPv6) */
-    if (!enb_has_valid_s1_addr(target_enb)) {
-        ogs_warn("Abort HO: target eNB missing S1 transport address (enb_id=%d)", target_enb->enb_id);
-        s1ap_send_handover_preparation_failure(
-                source_ue, S1AP_Cause_PR_transport,
-                S1AP_CauseTransport_transport_resource_unavailable);
-        return OGS_ERROR;
-    }
-			
 
     enb_ue_source_associate_target(source_ue, target_ue);
 

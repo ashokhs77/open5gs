@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+
 #include <signal.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -241,14 +242,15 @@ setbuf(stderr, NULL);
         ogs_fatal("Open5GS initialization failed. Aborted");
         return OGS_ERROR;
     }
-    rv = app_initialize(argv_out);
-        if (rv != OGS_OK) {
-            if (rv == OGS_RETRY)
-                return EXIT_SUCCESS;
 
-            ogs_fatal("Open5GS initialization failed. Aborted");
-            return OGS_ERROR;
-    }    
+    rv = app_initialize(argv_out);
+    if (rv != OGS_OK) {
+        if (rv == OGS_RETRY)
+            return EXIT_SUCCESS;
+
+        ogs_fatal("Open5GS initialization failed. Aborted");
+        return OGS_ERROR;
+    }
 
     atexit(terminate);
     ogs_signal_thread(check_signal);
