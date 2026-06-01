@@ -755,8 +755,18 @@ void smf_s5c_handle_modify_bearer_request(
         }
 
         if (indication && indication->handover_indication) {
-            ogs_assert(OGS_OK == smf_epc_pfcp_send_deactivation(sess,
-                    OGS_GTP2_CAUSE_ACCESS_CHANGED_FROM_NON_3GPP_TO_3GPP));
+            /* Non-3GPP -> 3GPP handover: deactivate the old access bearers.
+             * Under burst/teardown races the PFCP session or context can
+             * already be gone, making the deactivation send fail. Log and
+             * continue instead of asserting, which would crash the whole SMF
+             * (killing every other UE's session) over one stale handover. */
+            if (smf_epc_pfcp_send_deactivation(sess,
+                    OGS_GTP2_CAUSE_ACCESS_CHANGED_FROM_NON_3GPP_TO_3GPP)
+                            != OGS_OK) {
+                ogs_warn("PFCP deactivation send failed during Non-3GPP->3GPP "
+                        "handover Modify Bearer (session/PFCP context already "
+                        "gone under load); continuing without crash");
+            }
         }
     }
 }

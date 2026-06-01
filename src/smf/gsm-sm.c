@@ -449,10 +449,24 @@ void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
         case OGS_DIAM_GX_CMD_CODE_CREDIT_CONTROL:
             switch(gx_message->cc_request_type) {
             case OGS_DIAM_GX_CC_REQUEST_TYPE_INITIAL_REQUEST:
-                ogs_assert(gtp_xact);
+                sess->sm_data.gx_ccr_init_in_flight = false;
+                if (!gtp_xact) {
+                    /* The SGW/MME GTP-C Create Session transaction has
+                     * already expired (its T3-RESPONSE elapsed under burst
+                     * load) and was freed before this Gx CCA-Initial came
+                     * back. There is no peer transaction to answer, so
+                     * abandon this session setup gracefully via the error
+                     * path instead of asserting and killing the whole SMF
+                     * (which would tear down every other UE's session). */
+                    ogs_warn("Gx CCA-Initial received but the SGW/MME GTP-C "
+                            "Create Session transaction already expired under "
+                            "load; abandoning session setup without crash");
+                    sess->sm_data.gx_cca_init_err =
+                            ER_DIAMETER_UNABLE_TO_COMPLY;
+                    goto test_can_proceed;
+                }
                 diam_err = smf_gx_handle_cca_initial_request(sess,
                                 gx_message, gtp_xact);
-                sess->sm_data.gx_ccr_init_in_flight = false;
                 sess->sm_data.gx_cca_init_err = diam_err;
                 goto test_can_proceed;
             }
@@ -469,10 +483,21 @@ void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
         case OGS_DIAM_GY_CMD_CODE_CREDIT_CONTROL:
             switch(gy_message->cc_request_type) {
             case OGS_DIAM_GY_CC_REQUEST_TYPE_INITIAL_REQUEST:
-                ogs_assert(gtp_xact);
+                sess->sm_data.gy_ccr_init_in_flight = false;
+                if (!gtp_xact) {
+                    /* GTP-C Create Session transaction expired before this
+                     * Gy CCA-Initial returned (same burst-load race as the
+                     * Gx path above). Abandon gracefully instead of
+                     * asserting and crashing the whole SMF. */
+                    ogs_warn("Gy CCA-Initial received but the SGW/MME GTP-C "
+                            "Create Session transaction already expired under "
+                            "load; abandoning session setup without crash");
+                    sess->sm_data.gy_cca_init_err =
+                            ER_DIAMETER_UNABLE_TO_COMPLY;
+                    goto test_can_proceed;
+                }
                 diam_err = smf_gy_handle_cca_initial_request(sess,
                                 gy_message, gtp_xact, &need_gy_terminate);
-                sess->sm_data.gy_ccr_init_in_flight = false;
                 sess->sm_data.gy_cca_init_err = diam_err;
                 goto test_can_proceed;
             }
@@ -517,9 +542,20 @@ test_can_proceed:
                     sess, gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID,
                     OGS_DIAM_GY_CC_REQUEST_TYPE_TERMINATION_REQUEST);
             }
-            uint8_t gtp_cause = gtp_cause_from_diameter(
-                                    gtp_xact->gtp_version, diam_err, NULL);
-            send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
+            if (gtp_xact) {
+                uint8_t gtp_cause = gtp_cause_from_diameter(
+                                        gtp_xact->gtp_version, diam_err, NULL);
+                send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
+            } else {
+                /* gtp_xact == NULL means the SGW/MME Create Session
+                 * transaction already expired under load. There is no peer
+                 * transaction to send the GTP error response to; the Diameter
+                 * sessions are torn down above and the SMF session is cleaned
+                 * up when its GTP transaction timeout fires. */
+                ogs_warn("Cannot send GTP Create Session error response: "
+                        "GTP-C transaction already released under load; "
+                        "session will be cleaned up on timeout");
+            }
         }
     }
 }
@@ -1330,7 +1366,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
      * In step 1a/1f, upon receiving Nsmf_PDUSession_Update from V-SMF,
      * H-SMF SHALL immediately send the Update Response, then issue PFCP
      * Session Deletion. This ordering is per the standard, even for duplicate
-     * sessions, and may overlap with AMF’s concurrent Create Session.
+     * sessions, and may overlap with AMF?s concurrent Create Session.
      *
      * 1a. (UE initiated release)
      * 1f. This step is the same as step 1f in clause 4.3.4.2,
@@ -1559,10 +1595,10 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     SWITCH(sbi_message->h.resource.component[2])
                     CASE(OGS_SBI_RESOURCE_NAME_MODIFY)
 /*
- * PFCP delete triggers are defined in lib/pfcp/xact.h (values 1–7).
+ * PFCP delete triggers are defined in lib/pfcp/xact.h (values 1?7).
  * To avoid overlap with OGS_PFCP_DELETE_TRIGGER_*, SMF states use:
- *   - UPDATE_STATE_BASE at 0x10–0x14
- *   - UECM_STATE_BASE   at 0x20–0x23
+ *   - UPDATE_STATE_BASE at 0x10?0x14
+ *   - UECM_STATE_BASE   at 0x20?0x23
  * HR flag is bit 7 (0x80).
  */
                         switch (e->h.sbi.state) {
@@ -2464,7 +2500,7 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
      * In step 1f, upon receiving Nsmf_PDUSession_Update from V-SMF, H-SMF
      * SHALL immediately send the Update Response, then issue PFCP Session
      * Deletion. This ordering is per the standard, even for duplicate
-     * sessions, and may overlap with AMF’s concurrent Create Session.
+     * sessions, and may overlap with AMF?s concurrent Create Session.
      *
      * 1.  V: OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|OGS_PFCP_MODIFY_UL_ONLY|
      *        OGS_PFCP_MODIFY_DEACTIVATE
