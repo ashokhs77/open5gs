@@ -164,9 +164,9 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             mme_send_tau_accept_and_check_release(enb_ue, mme_ue);
         }
     } else {
-        ogs_fatal("[%s] Invalid EPS-Type[%d]",
+        ogs_warn("[%s] Unexpected EPS-Type[%d] in SGsAP LU handler -- "
+                "UE state changed (e.g. Detach) during round-trip; ignoring",
                 mme_ue->imsi_bcd, mme_ue->nas_eps.type);
-        ogs_assert_if_reached();
     }
 
     return;
@@ -198,9 +198,9 @@ error:
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
     } else {
-        ogs_fatal("[%s] Invalid EPS-Type[%d]",
+        ogs_warn("[%s] Unexpected EPS-Type[%d] in SGsAP LU handler -- "
+                "UE state changed (e.g. Detach) during round-trip; ignoring",
                 mme_ue->imsi_bcd, mme_ue->nas_eps.type);
-        ogs_assert_if_reached();
     }
     mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
 }
@@ -345,9 +345,9 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             mme_send_release_access_bearer_or_ue_context_release(enb_ue);
         }
     } else {
-        ogs_fatal("[%s] Invalid EPS-Type[%d]",
+        ogs_warn("[%s] Unexpected EPS-Type[%d] in SGsAP LU handler -- "
+                "UE state changed (e.g. Detach) during round-trip; ignoring",
                 mme_ue->imsi_bcd, mme_ue->nas_eps.type);
-        ogs_assert_if_reached();
     }
 
     return;
