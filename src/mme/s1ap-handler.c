@@ -1285,6 +1285,36 @@ void s1ap_handle_initial_context_setup_response(
         }
     }
 
+    /*
+     * A Delete Bearer Request can race with a Service Request while the S1
+     * context is being restored. Retransmit any pending NAS deactivation
+     * after Initial Context Setup so the original S11 transaction can finish.
+     */
+    {
+        mme_sess_t *pending_sess = NULL;
+        mme_bearer_t *pending_bearer = NULL;
+
+        ogs_list_for_each(&mme_ue->sess_list, pending_sess) {
+            ogs_list_for_each(
+                    &pending_sess->bearer_list, pending_bearer) {
+                if (pending_bearer->delete.xact_id < OGS_MIN_POOL_ID ||
+                    pending_bearer->delete.xact_id > OGS_MAX_POOL_ID)
+                    continue;
+
+                ogs_warn("[%s] Retry pending bearer deactivation after "
+                        "Initial Context Setup [EBI:%d]",
+                        mme_ue->imsi_bcd, pending_bearer->ebi);
+
+                r = nas_eps_send_deactivate_bearer_context_request(
+                        pending_bearer);
+                if (r != OGS_OK)
+                    ogs_error("[%s] Failed to retry bearer deactivation "
+                            "[EBI:%d]", mme_ue->imsi_bcd,
+                            pending_bearer->ebi);
+            }
+        }
+    }
+
     if (MME_PAGING_ONGOING(mme_ue))
         mme_send_after_paging(mme_ue, false);
 }
