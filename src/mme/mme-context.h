@@ -478,6 +478,7 @@ struct mme_ue_s {
     uint8_t         imsi[OGS_MAX_IMSI_LEN];
     int             imsi_len;
     char            imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    char            attach_attempt_imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
     ogs_nas_mobile_identity_imsi_t nas_mobile_identity_imsi;
 
     uint8_t         imeisv[OGS_MAX_IMEISV_LEN];

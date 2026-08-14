@@ -56,6 +56,7 @@ libamf_sources = files('''
     gmm-build.c
     gmm-handler.c
     nas-path.c
+    registration-audit.c
     gmm-sm.c
 
     amf-sm.c

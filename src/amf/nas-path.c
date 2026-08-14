@@ -21,6 +21,7 @@
 #include "ngap-build.h"
 #include "gmm-build.h"
 #include "nas-path.h"
+#include "registration-audit.h"
 
 int nas_5gs_send_to_gnb(amf_ue_t *amf_ue, ogs_pkbuf_t *pkbuf)
 {
@@ -211,6 +212,20 @@ int nas_5gs_send_registration_reject(
     }
 
     ogs_warn("[%s] Registration reject [%d]", amf_ue->suci, gmm_cause);
+
+    /*
+     * Record the AMF rejection decision before building or sending the NAS
+     * response. A failed downlink must not erase the attempted registration
+     * from the operational audit trail.
+     */
+    {
+        int audit_rv =
+            amf_registration_reject_audit_append(amf_ue, gmm_cause);
+        if (audit_rv == OGS_ERROR)
+            ogs_error("[%s] Failed to record registration reject",
+                    amf_ue->supi ? amf_ue->supi :
+                    (amf_ue->suci ? amf_ue->suci : "Unknown ID"));
+    }
 
     gmmbuf = gmm_build_registration_reject(amf_ue, gmm_cause);
     if (!gmmbuf) {
