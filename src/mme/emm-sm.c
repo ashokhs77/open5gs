@@ -1121,7 +1121,8 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
                     &message->emm.authentication_response);
             if (rv != OGS_OK) {
                 ogs_error("emm_handle_authentication_response() failed");
-                r = nas_eps_send_authentication_reject(mme_ue);
+                r = nas_eps_send_authentication_reject(mme_ue, -1,
+                        "Authentication response verification failed");
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
@@ -1173,7 +1174,8 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
                 break;
             }
 
-            r = nas_eps_send_authentication_reject(mme_ue);
+            r = nas_eps_send_authentication_reject(mme_ue,
+                    authentication_failure->emm_cause, NULL);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
             MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
@@ -1259,7 +1261,8 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
                     mme_timer_cfg(MME_TIMER_T3460)->max_count) {
                 ogs_warn("Retransmission of IMSI[%s] failed. "
                         "Stop retransmission", mme_ue->imsi_bcd);
-                r = nas_eps_send_authentication_reject(mme_ue);
+                r = nas_eps_send_authentication_reject(mme_ue, -1,
+                        "Authentication request timeout");
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);

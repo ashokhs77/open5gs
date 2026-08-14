@@ -34,6 +34,7 @@
 #include "metrics/prometheus/json_pager.h"
 #include "enb-info.h"
 #include "ue-info.h"
+#include "unauthorized-audit.h"
 
 static ogs_thread_t *thread;
 static void mme_main(void *data);
@@ -58,6 +59,10 @@ int mme_initialize(void)
 
     rv = ogs_log_config_domain(
             ogs_app()->logger.domain, ogs_app()->logger.level);
+    if (rv != OGS_OK) return rv;
+
+    /* Fail fast instead of silently running without the required audit. */
+    rv = mme_unauthorized_audit_init();
     if (rv != OGS_OK) return rv;
 
     rv = ogs_gtp_context_parse_config(APP_NAME, "sgwc");

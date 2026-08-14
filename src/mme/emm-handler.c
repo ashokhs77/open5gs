@@ -56,6 +56,26 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     ogs_assert(mme_ue);
     ogs_assert(enb_ue);
 
+    mme_ue->attach_attempt_imsi_bcd[0] = '\0';
+
+    /*
+     * Capture a syntactically valid IMSI before any attach validation can
+     * reject the request, so every such rejection can be audited centrally.
+     */
+    if (eps_mobile_identity->imsi.type ==
+            OGS_NAS_EPS_MOBILE_IDENTITY_IMSI &&
+        eps_mobile_identity->length ==
+            sizeof(ogs_nas_mobile_identity_imsi_t)) {
+        ogs_nas_eps_imsi_to_bcd(
+            &eps_mobile_identity->imsi, eps_mobile_identity->length,
+            mme_ue->attach_attempt_imsi_bcd);
+    } else if (eps_mobile_identity->imsi.type ==
+            OGS_NAS_EPS_MOBILE_IDENTITY_GUTI &&
+        MME_UE_HAVE_IMSI(mme_ue)) {
+        ogs_cpystrn(mme_ue->attach_attempt_imsi_bcd,
+                mme_ue->imsi_bcd, sizeof(mme_ue->attach_attempt_imsi_bcd));
+    }
+
     ogs_assert(esm_message_container);
     if (!esm_message_container->length) {
         ogs_error("No ESM Message Container");
@@ -498,6 +518,10 @@ int emm_handle_identity_response(
         }
         memcpy(&mme_ue->nas_mobile_identity_imsi,
             &mobile_identity->imsi, mobile_identity->length);
+
+        ogs_nas_eps_imsi_to_bcd(
+            &mobile_identity->imsi, mobile_identity->length,
+            mme_ue->attach_attempt_imsi_bcd);
 
         emm_cause = emm_cause_from_access_control(mme_ue);
         if (emm_cause != OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED) {

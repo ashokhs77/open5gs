@@ -49,6 +49,7 @@ libmme_sources = files('''
     mme-path.h
     mme-dns-select.h
     mme-dns.h
+    unauthorized-audit.h
     metrics.h
 
     mme-init.c
@@ -85,6 +86,7 @@ libmme_sources = files('''
     mme-sm.c
     mme-path.c
     mme-dns-select.c
+    unauthorized-audit.c
     sbc-handler.c
     metrics.c
     enb-info.c

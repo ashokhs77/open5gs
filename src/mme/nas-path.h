@@ -39,7 +39,8 @@ int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
 int nas_eps_send_identity_request(mme_ue_t *mme_ue);
 
 int nas_eps_send_authentication_request(mme_ue_t *mme_ue);
-int nas_eps_send_authentication_reject(mme_ue_t *mme_ue);
+int nas_eps_send_authentication_reject(
+        mme_ue_t *mme_ue, int failure_cause, const char *failure_reason);
 
 int nas_eps_send_security_mode_command(mme_ue_t *mme_ue);
 

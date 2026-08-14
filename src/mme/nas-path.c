@@ -25,6 +25,7 @@
 #include "mme-event.h"
 #include "mme-timer.h"
 #include "mme-sm.h"
+#include "unauthorized-audit.h"
 
 int nas_eps_send_to_enb(mme_ue_t *mme_ue, ogs_pkbuf_t *pkbuf)
 {
@@ -200,6 +201,11 @@ int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         return OGS_NOTFOUND;
     }
 
+    if (mme_unauthorized_audit_append(mme_ue, "Attach Reject",
+                emm_cause, NULL) != OGS_OK)
+        ogs_error("[%s] Failed to record attach reject",
+                mme_ue->attach_attempt_imsi_bcd);
+
     if (!enb_ue) {
         ogs_error("S1 context has already been removed");
         return OGS_NOTFOUND;
@@ -361,7 +367,8 @@ int nas_eps_send_security_mode_command(mme_ue_t *mme_ue)
     return rv;
 }
 
-int nas_eps_send_authentication_reject(mme_ue_t *mme_ue)
+int nas_eps_send_authentication_reject(
+        mme_ue_t *mme_ue, int failure_cause, const char *failure_reason)
 {
     int rv;
     enb_ue_t *enb_ue = NULL;
@@ -371,6 +378,11 @@ int nas_eps_send_authentication_reject(mme_ue_t *mme_ue)
         ogs_error("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
+
+    if (mme_unauthorized_audit_append(mme_ue, "Authentication Reject",
+                failure_cause, failure_reason) != OGS_OK)
+        ogs_error("[%s] Failed to record authentication reject",
+                mme_ue->attach_attempt_imsi_bcd);
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
@@ -899,6 +911,11 @@ int nas_eps_send_tau_reject(
         return OGS_NOTFOUND;
     }
 
+    if (mme_unauthorized_audit_append(mme_ue, "TAU Reject",
+                emm_cause, NULL) != OGS_OK)
+        ogs_error("[%s] Failed to record TAU reject",
+                mme_ue->attach_attempt_imsi_bcd);
+
     if (!enb_ue) {
         ogs_error("S1 context has already been removed");
         return OGS_NOTFOUND;
@@ -929,6 +946,11 @@ int nas_eps_send_service_reject(
         ogs_error("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
+
+    if (mme_unauthorized_audit_append(mme_ue, "Service Reject",
+                emm_cause, NULL) != OGS_OK)
+        ogs_error("[%s] Failed to record service reject",
+                mme_ue->attach_attempt_imsi_bcd);
 
     if (!enb_ue) {
         ogs_error("S1 context has already been removed");
