@@ -8,20 +8,20 @@
 #define _OpenAPI_ipv6_prefix_range_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_ipv6_prefix_range_s OpenAPI_ipv6_prefix_range_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_ipv6_prefix_range_s OpenAPI_ipv6_prefix_range_t;
-typedef struct OpenAPI_ipv6_prefix_range_s {
+struct OpenAPI_ipv6_prefix_range_s {
     char *start;
     char *end;
-} OpenAPI_ipv6_prefix_range_t;
+};
 
 OpenAPI_ipv6_prefix_range_t *OpenAPI_ipv6_prefix_range_create(
     char *start,

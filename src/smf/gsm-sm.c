@@ -160,6 +160,49 @@ static bool send_ccr_termination_req_gx_gy_s6b(
     return true;
 }
 
+static bool hsmf_update_has_up_cnx_state(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    return sess->nsmf_param.up_cnx_state != OpenAPI_up_cnx_state_NULL;
+}
+
+static bool hsmf_update_has_qos_modification(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    return sess->nsmf_param.up_cnx_state == OpenAPI_up_cnx_state_NULL &&
+        sess->nsmf_param.pfcp_flags != 0;
+}
+
+static void hsmf_update_send_bad_request(
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *sbi_message,
+        smf_sess_t *sess, const char *reason)
+{
+    char *strerror = NULL;
+
+    ogs_assert(stream);
+    ogs_assert(sbi_message);
+    ogs_assert(sess);
+    ogs_assert(reason);
+
+    strerror = ogs_msprintf(
+            "Invalid HsmfUpdateData: %s "
+            "[requestIndication:%d][upCnxState:%d][pfcp_flags:0x%llx]",
+            reason,
+            sess->nsmf_param.request_indication,
+            sess->nsmf_param.up_cnx_state,
+            (long long)sess->nsmf_param.pfcp_flags);
+    ogs_assert(strerror);
+
+    ogs_error("%s", strerror);
+    ogs_assert(true == ogs_sbi_server_send_error(
+            stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+            sbi_message, strerror, NULL, NULL));
+
+    ogs_free(strerror);
+}
+
 void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
 {
     int rv;
@@ -177,6 +220,7 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -271,8 +315,10 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nsmf_pdusession:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_SM_CONTEXTS)
                 SWITCH(sbi_message->h.resource.component[2])
@@ -340,7 +386,7 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", sbi_message->h.service.name);
             ogs_assert(true ==
                 ogs_sbi_server_send_error(stream,
@@ -348,7 +394,7 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
                     "Invalid API name", sbi_message->h.service.name,
                     NULL));
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
-        END
+        }
         break;
 
     case SMF_EVT_5GSM_MESSAGE:
@@ -569,6 +615,7 @@ void smf_gsm_state_wait_5gc_sm_policy_association(ogs_fsm_t *s, smf_event_t *e)
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -591,8 +638,10 @@ void smf_gsm_state_wait_5gc_sm_policy_association(ogs_fsm_t *s, smf_event_t *e)
         smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
         ogs_assert(smf_ue);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nudm_sdm:
             stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             ogs_assert(stream_id >= OGS_MIN_POOL_ID &&
                     stream_id <= OGS_MAX_POOL_ID);
@@ -672,7 +721,7 @@ void smf_gsm_state_wait_5gc_sm_policy_association(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_SMPOLICYCONTROL)
+        case OpenAPI_service_name_npcf_smpolicycontrol:
             /*
              * TS23.502
              * 4.3.2.2 UE Requested PDU Session Establishment
@@ -735,11 +784,11 @@ void smf_gsm_state_wait_5gc_sm_policy_association(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("[%s:%d] Invalid API name [%s]",
                     smf_ue->supi, sess->psi, sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
         break;
 
     default:
@@ -847,14 +896,14 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                 }
                 if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
                     r = smf_sbi_discover_and_send(
-                            OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+                            OpenAPI_service_name_nsmf_pdusession, NULL,
                             smf_nsmf_pdusession_build_create_data,
                             sess, NULL, 0, NULL);
                     ogs_expect(r == OGS_OK);
                     ogs_assert(r != OGS_ERROR);
                 } else if (HOME_ROUTED_ROAMING_IN_HSMF(sess)) {
                     r = smf_sbi_discover_and_send(
-                            OGS_SBI_SERVICE_TYPE_NUDM_UECM, NULL,
+                            OpenAPI_service_name_nudm_uecm, NULL,
                             smf_nudm_uecm_build_registration,
                             sess, stream,
                             SMF_UECM_STATE_REGISTERED_HR,
@@ -932,6 +981,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_gtp_xact_t *gtp_xact = NULL;
     ogs_gtp1_message_t *gtp1_message = NULL;
@@ -1085,8 +1135,10 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nsmf_pdusession:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_SM_CONTEXTS)
                 SWITCH(sbi_message->h.resource.component[2])
@@ -1155,8 +1207,25 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     if (rc == true) {
                         switch (sess->nsmf_param.request_indication) {
                         case OpenAPI_request_indication_UE_REQ_PDU_SES_MOD:
-                            if (sess->nsmf_param.up_cnx_state ==
-                                    OpenAPI_up_cnx_state_DEACTIVATED) {
+    /*
+     * UE requested H-SMF update supports two forms:
+     *
+     * 1. UP connection state transition
+     *    - upCnxState must be present.
+     *    - Only DEACTIVATED, ACTIVATING and ACTIVATED are valid.
+     *
+     * 2. QoS Flow modification
+     *    - upCnxState must be absent.
+     *    - pfcp_flags must be non-zero.
+     *
+     * Any other combination is rejected as Bad Request because it can be
+     * provided by the peer.
+     */
+                            if (hsmf_update_has_up_cnx_state(sess)) {
+                                bool far_update = false;
+
+                                switch (sess->nsmf_param.up_cnx_state) {
+                                case OpenAPI_up_cnx_state_DEACTIVATED:
     /*
      * UE-requested PDU Session Modification(DEACTIVATED)
      *
@@ -1175,14 +1244,15 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
      * 8.  V: smf_sbi_send_sm_context_updated_data_up_cnx_state(
      *          OpenAPI_up_cnx_state_DEACTIVATED)
      */
-                                ogs_assert(OGS_OK ==
-                                    smf_5gc_pfcp_send_all_pdr_modification_request(
-                                        sess, stream,
-                                        OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
-                                        OGS_PFCP_MODIFY_DL_ONLY|
-                                        OGS_PFCP_MODIFY_DEACTIVATE, 0, 0));
-                            } else if (sess->nsmf_param.up_cnx_state ==
-                                    OpenAPI_up_cnx_state_ACTIVATING) {
+                                    ogs_assert(OGS_OK ==
+                                        smf_5gc_pfcp_send_all_pdr_modification_request(
+                                            sess, stream,
+                                            OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
+                                            OGS_PFCP_MODIFY_DL_ONLY|
+                                            OGS_PFCP_MODIFY_DEACTIVATE, 0, 0));
+                                    break;
+
+                                case OpenAPI_up_cnx_state_ACTIVATING:
     /*
      * UE-requested PDU Session Modification(ACTIVATING)
      *
@@ -1197,11 +1267,13 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
      *          OpenAPI_up_cnx_state_ACTIVATING,
      *          OpenAPI_n2_sm_info_type_PDU_RES_SETUP_REQ, n2smbuf)
      */
-                                ogs_assert(true ==
-                                        ogs_sbi_send_http_status_no_content(
-                                            stream));
-                            } else if (sess->nsmf_param.up_cnx_state ==
-                                    OpenAPI_up_cnx_state_ACTIVATED) {
+                                    ogs_assert(true ==
+                                            ogs_sbi_send_http_status_no_content(
+                                                stream));
+                                    break;
+
+                                case OpenAPI_up_cnx_state_ACTIVATED:
+
     /*
      * UE-requested PDU Session Modification(ACTIVATED)
      *
@@ -1226,50 +1298,60 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
      *        case SMF_UPDATE_STATE_HR_ACTIVATED_FROM_NON_ACTIVATING:
      *           ogs_sbi_send_http_status_no_content
      */
-                                bool far_update = false;
-
-                                if (memcmp(
-                                        &sess->nsmf_param.dl_ip,
-                                        &sess->remote_dl_ip,
-                                        sizeof(sess->nsmf_param.dl_ip)) != 0 ||
-                                    sess->nsmf_param.dl_teid !=
-                                        sess->remote_dl_teid)
-                                    far_update = true;
-
-                                ogs_list_for_each(
-                                        &sess->bearer_list, qos_flow) {
-                                    ogs_pfcp_far_t *dl_far = qos_flow->dl_far;
-                                    ogs_assert(dl_far);
-
-                                    if (dl_far->apply_action !=
-                                            OGS_PFCP_APPLY_ACTION_FORW)
+                                    if (memcmp(
+                                            &sess->nsmf_param.dl_ip,
+                                            &sess->remote_dl_ip,
+                                            sizeof(
+                                                sess->nsmf_param.dl_ip)) != 0 ||
+                                        sess->nsmf_param.dl_teid !=
+                                            sess->remote_dl_teid)
                                         far_update = true;
 
-                                    dl_far->apply_action =
-                                        OGS_PFCP_APPLY_ACTION_FORW;
-                                    ogs_assert(OGS_OK ==
-                                        ogs_pfcp_ip_to_outer_header_creation(
-                                            &sess->remote_dl_ip,
-                                            &dl_far->outer_header_creation,
-                                            &dl_far->outer_header_creation_len)
-                                        );
-                                    dl_far->outer_header_creation.teid =
-                                        sess->remote_dl_teid;
-                                }
+                                    ogs_list_for_each(
+                                            &sess->bearer_list, qos_flow) {
+                                        ogs_pfcp_far_t *dl_far =
+                                            qos_flow->dl_far;
+                                        ogs_assert(dl_far);
 
-                                if (far_update) {
-                                    ogs_assert(OGS_OK ==
-                                        smf_5gc_pfcp_send_all_pdr_modification_request(
-                                            sess, stream,
-                                            OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
-                                            OGS_PFCP_MODIFY_DL_ONLY|
-                                            OGS_PFCP_MODIFY_ACTIVATE, 0, 0));
-                                } else {
-                                    ogs_assert(true ==
-                                            ogs_sbi_send_http_status_no_content(
-                                                stream));
+                                        if (dl_far->apply_action !=
+                                                OGS_PFCP_APPLY_ACTION_FORW)
+                                            far_update = true;
+
+                                        dl_far->apply_action =
+                                            OGS_PFCP_APPLY_ACTION_FORW;
+                                        ogs_assert(OGS_OK ==
+                                            ogs_pfcp_ip_to_outer_header_creation(
+                                                &sess->remote_dl_ip,
+                                                &dl_far->outer_header_creation,
+                                                &dl_far->
+                                                    outer_header_creation_len)
+                                            );
+                                        dl_far->outer_header_creation.teid =
+                                            sess->remote_dl_teid;
+                                    }
+
+                                    if (far_update) {
+                                        ogs_assert(OGS_OK ==
+                                            smf_5gc_pfcp_send_all_pdr_modification_request(
+                                                sess, stream,
+                                                OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
+                                                OGS_PFCP_MODIFY_DL_ONLY|
+                                                OGS_PFCP_MODIFY_ACTIVATE,
+                                                0, 0));
+                                    } else {
+                                        ogs_assert(true ==
+                                                ogs_sbi_send_http_status_no_content(
+                                                    stream));
+                                    }
+                                    break;
+
+                                default:
+                                    hsmf_update_send_bad_request(
+                                            stream, sbi_message, sess,
+                                            "unsupported upCnxState");
+                                    break;
                                 }
-                            } else if (sess->nsmf_param.pfcp_flags) {
+                            } else if (hsmf_update_has_qos_modification(sess)) {
                                 ogs_assert(true ==
                                         ogs_sbi_send_http_status_no_content(
                                             stream));
@@ -1281,11 +1363,9 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                                             OGS_PFCP_MODIFY_UE_REQUESTED|
                                             sess->nsmf_param.pfcp_flags, 0));
                             } else {
-                                ogs_fatal("Invalid [upCnxState:%d]"
-                                        "[pfcp_flags:0x%llx]",
-                                        sess->nsmf_param.up_cnx_state,
-                                        (long long)sess->nsmf_param.pfcp_flags);
-                                ogs_assert_if_reached();
+                                hsmf_update_send_bad_request(
+                                        stream, sbi_message, sess,
+                                        "missing upCnxState and pfcp_flags");
                             }
                             break;
                         case OpenAPI_request_indication_UE_REQ_PDU_SES_REL:
@@ -1545,7 +1625,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", sbi_message->h.service.name);
             ogs_assert(true ==
                 ogs_sbi_server_send_error(stream,
@@ -1553,7 +1633,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     "Invalid API name", sbi_message->h.service.name,
                     NULL));
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
-        END
+        }
         break;
 
     case OGS_EVENT_SBI_CLIENT:
@@ -1567,8 +1647,10 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
         if (stream_id >= OGS_MIN_POOL_ID && stream_id <= OGS_MAX_POOL_ID)
             stream = ogs_sbi_stream_find_by_id(stream_id);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 smf_namf_comm_handle_n1_n2_message_transfer(
@@ -1583,7 +1665,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        case OpenAPI_service_name_nsmf_pdusession:
             stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             if (stream_id >= OGS_MIN_POOL_ID && stream_id <= OGS_MAX_POOL_ID)
                 stream = ogs_sbi_stream_find_by_id(stream_id);
@@ -1847,11 +1929,11 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("[%s:%d] Invalid API name [%s]",
                     smf_ue->supi, sess->psi, sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
         break;
 
     case SMF_EVT_5GSM_MESSAGE:
@@ -1877,7 +1959,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     OpenAPI_request_indication_UE_REQ_PDU_SES_MOD;
 
                 r = smf_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+                        OpenAPI_service_name_nsmf_pdusession, NULL,
                         smf_nsmf_pdusession_build_hsmf_update_data,
                         sess, stream, SMF_UPDATE_STATE_UE_REQ_MOD, NULL);
                 ogs_expect(r == OGS_OK);
@@ -2135,7 +2217,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     OpenAPI_request_indication_NW_REQ_PDU_SES_REL;
 
                 r = smf_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+                        OpenAPI_service_name_nsmf_pdusession, NULL,
                         smf_nsmf_pdusession_build_vsmf_update_data,
                         sess, NULL, e->h.sbi.state, NULL);
                 ogs_expect(r == OGS_OK);
@@ -2206,12 +2288,15 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_pfcp_xact_t *pfcp_xact = NULL;
     ogs_pfcp_message_t *pfcp_message = NULL;
 
     uint8_t pfcp_cause, gtp_cause;
     ogs_gtp_xact_t *gtp_xact = NULL;
+
+    ogs_pkbuf_t *n1smbuf = NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -2303,7 +2388,25 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
 
                 if (trigger == OGS_PFCP_DELETE_TRIGGER_LOCAL_INITIATED) {
 
-                    ogs_error("OLD Session Released");
+                    /*
+                     * There is no peer waiting for a response, so the
+                     * remaining PCF and UDM resources have to be released
+                     * here.
+                     *
+                     * SMF_UECM_STATE_DEREG_BY_N1N2 ends with
+                     * smf_sbi_send_sm_context_status_notify() rather than a
+                     * response on a stream we do not have, and it is the SMF
+                     * that decided to release the session.
+                     */
+                    ogs_error("Session Released locally");
+
+                    r = smf_sbi_cleanup_session(
+                            sess, NULL,
+                            SMF_UECM_STATE_DEREG_BY_N1N2,
+                            SMF_SBI_CLEANUP_MODE_POLICY_FIRST);
+                    ogs_expect(r == OGS_OK);
+                    ogs_assert(r != OGS_ERROR);
+
                     OGS_FSM_TRAN(s, smf_gsm_state_5gc_session_will_deregister);
 
                 } else if (trigger == OGS_PFCP_DELETE_TRIGGER_UE_REQUESTED) {
@@ -2357,7 +2460,7 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                         }
 
                         r = smf_sbi_discover_and_send(
-                                OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+                                OpenAPI_service_name_nsmf_pdusession, NULL,
                                 smf_nsmf_pdusession_build_vsmf_update_data,
                                 sess, NULL, trigger, NULL);
                         ogs_expect(r == OGS_OK);
@@ -2465,6 +2568,52 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                                 smf_gsm_state_wait_5gc_n1_n2_release);
 
                     } else {
+
+                        if (!stream) {
+                            /*
+                             * SBI stream was torn down before this
+                             * PFCP-deletion-completion event fired
+                             * (peer RST_STREAM, idle-stream timeout,
+                             * premature client disconnect). The N1/N2
+                             * release messages cannot reach the AMF,
+                             * so the build is skipped entirely.
+                             * Transitioning to
+                             * smf_gsm_state_wait_5gc_n1_n2_release
+                             * would deadlock the FSM waiting for
+                             * completion of a release procedure that
+                             * was never started.
+                             *
+                             * Take the local-only cleanup path through
+                             * smf_sbi_cleanup_session(POLICY_FIRST),
+                             * which internally dispatches to PCF
+                             * SmPolicy delete, UDM SDM unsubscribe, or
+                             * UDM UECM deregistration depending on
+                             * which SBI state is associated with the
+                             * session. The chain converges at the
+                             * UDM UECM DEREG_BY_N1N2 handler, which
+                             * issues smf_sbi_send_sm_context_status_notify()
+                             * to keep AMF state consistent and then
+                             * SMF_SESS_CLEAR(sess).
+                             */
+                            smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+                            ogs_assert(smf_ue);
+
+                            ogs_error("[%s:%d] Stream removed before "
+                                    "PFCP deletion completion; "
+                                    "proceeding with local-only release",
+                                    smf_ue->supi, sess->psi);
+
+                            r = smf_sbi_cleanup_session(
+                                    sess, NULL,
+                                    SMF_UECM_STATE_DEREG_BY_N1N2,
+                                    SMF_SBI_CLEANUP_MODE_POLICY_FIRST);
+                            ogs_expect(r == OGS_OK);
+                            ogs_assert(r != OGS_ERROR);
+
+                            OGS_FSM_TRAN(s,
+                                    smf_gsm_state_5gc_session_will_deregister);
+                            break;
+                        }
 
                         n1smbuf = gsm_build_pdu_session_release_command(
                                 sess, OGS_5GSM_CAUSE_REGULAR_DEACTIVATION);
@@ -2704,10 +2853,10 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
         smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
         ogs_assert(smf_ue);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_SMPOLICYCONTROL)
-            ogs_pkbuf_t *n1smbuf = NULL;
-
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_npcf_smpolicycontrol:
             stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             ogs_assert(stream_id >= OGS_MIN_POOL_ID &&
                     stream_id <= OGS_MAX_POOL_ID);
@@ -2730,7 +2879,7 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                     stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
                     n1smbuf, OpenAPI_n2_sm_info_type_NULL, NULL);
             break;
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        case OpenAPI_service_name_nsmf_pdusession:
             stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             if (stream_id >= OGS_MIN_POOL_ID && stream_id <= OGS_MAX_POOL_ID)
                 stream = ogs_sbi_stream_find_by_id(stream_id);
@@ -2841,7 +2990,7 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 ogs_error("[%s:%d] Ignore SBI message "
@@ -2858,11 +3007,11 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("[%s:%d] Invalid API name [%s]",
                     smf_ue->supi, sess->psi, sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
         break;
     }
 }
@@ -3000,12 +3149,14 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
     smf_ue_t *smf_ue = NULL;
     smf_sess_t *sess = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
+    ogs_pkbuf_t *n1smbuf = NULL;
 
     ogs_nas_5gs_message_t *nas_message = NULL;
 
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     int r;
 
@@ -3040,8 +3191,10 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nsmf_pdusession:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_SM_CONTEXTS)
                 SWITCH(sbi_message->h.resource.component[2])
@@ -3190,7 +3343,7 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", sbi_message->h.service.name);
             ogs_assert(true ==
                 ogs_sbi_server_send_error(stream,
@@ -3198,7 +3351,7 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
                     "Invalid API name", sbi_message->h.service.name,
                     NULL));
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
-        END
+        }
         break;
 
     case OGS_EVENT_SBI_CLIENT:
@@ -3209,8 +3362,10 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
         if (stream_id >= OGS_MIN_POOL_ID && stream_id <= OGS_MAX_POOL_ID)
             stream = ogs_sbi_stream_find_by_id(stream_id);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nsmf_pdusession:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_VSMF_PDU_SESSIONS)
                 SWITCH(sbi_message->h.method)
@@ -3287,7 +3442,7 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 ogs_info("[%s:%d] state [%d] res_status [%d], stream [%p:%d]",
@@ -3306,9 +3461,7 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_SMPOLICYCONTROL)
-            ogs_pkbuf_t *n1smbuf = NULL;
-
+        case OpenAPI_service_name_npcf_smpolicycontrol:
             ogs_error("[%s:%d] state [%d] res_status [%d]",
                 smf_ue->supi, sess->psi,
                 e->h.sbi.state, sbi_message->res_status);
@@ -3322,7 +3475,7 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
                     n1smbuf, OpenAPI_n2_sm_info_type_NULL, NULL);
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
+        case OpenAPI_service_name_nudm_sdm:
             SWITCH(sbi_message->h.resource.component[1])
             CASE(OGS_SBI_RESOURCE_NAME_SDM_SUBSCRIPTIONS)
                 SWITCH(sbi_message->h.method)
@@ -3351,11 +3504,11 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("[%s:%d] Invalid API name [%s]",
                     smf_ue->supi, sess->psi, sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
         break;
 
     case SMF_EVT_NGAP_MESSAGE:
@@ -3615,6 +3768,7 @@ void smf_gsm_state_5gc_n1_n2_reject(ogs_fsm_t *s, smf_event_t *e)
     smf_ue_t *smf_ue = NULL;
     smf_sess_t *sess = NULL;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -3635,7 +3789,7 @@ void smf_gsm_state_5gc_n1_n2_reject(ogs_fsm_t *s, smf_event_t *e)
             sess->nsmf_param.ue_timezone = true;
 
             r = smf_sbi_discover_and_send(
-                    OGS_SBI_SERVICE_TYPE_NPCF_SMPOLICYCONTROL, NULL,
+                    OpenAPI_service_name_npcf_smpolicycontrol, NULL,
                     smf_npcf_smpolicycontrol_build_delete,
                     sess, NULL,
                     OGS_PFCP_DELETE_TRIGGER_AMF_UPDATE_SM_CONTEXT, NULL);
@@ -3654,8 +3808,10 @@ void smf_gsm_state_5gc_n1_n2_reject(ogs_fsm_t *s, smf_event_t *e)
         smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
         ogs_assert(smf_ue);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_SMPOLICYCONTROL)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_npcf_smpolicycontrol:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_SM_POLICIES)
                 if (!sbi_message->h.resource.component[1]) {
@@ -3699,7 +3855,7 @@ void smf_gsm_state_5gc_n1_n2_reject(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
@@ -3713,11 +3869,11 @@ void smf_gsm_state_5gc_n1_n2_reject(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("[%s:%d] Invalid API name [%s]",
                     smf_ue->supi, sess->psi, sbi_message->h.service.name);
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
-        END
+        }
         break;
 
     default:
@@ -3736,6 +3892,7 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     int r;
 
@@ -3768,8 +3925,10 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nsmf_pdusession:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_SM_CONTEXTS)
                 SWITCH(sbi_message->h.resource.component[2])
@@ -3801,7 +3960,7 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", sbi_message->h.service.name);
             ogs_assert(true ==
                 ogs_sbi_server_send_error(stream,
@@ -3809,7 +3968,7 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
                     "Invalid API name", sbi_message->h.service.name,
                     NULL));
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
-        END
+        }
         break;
 
     case OGS_EVENT_SBI_CLIENT:
@@ -3823,8 +3982,10 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
         if (stream_id >= OGS_MIN_POOL_ID && stream_id <= OGS_MAX_POOL_ID)
             stream = ogs_sbi_stream_find_by_id(stream_id);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_SMPOLICYCONTROL)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_npcf_smpolicycontrol:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_SM_POLICIES)
                 if (!sbi_message->h.resource.component[1]) {
@@ -3904,7 +4065,7 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
+        case OpenAPI_service_name_nudm_sdm:
             SWITCH(sbi_message->h.resource.component[1])
             CASE(OGS_SBI_RESOURCE_NAME_SDM_SUBSCRIPTIONS)
                 SWITCH(sbi_message->h.method)
@@ -3933,9 +4094,9 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", sbi_message->h.service.name);
-        END
+        }
         break;
 
     default:

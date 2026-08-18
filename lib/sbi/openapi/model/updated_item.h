@@ -8,26 +8,24 @@
 #define _OpenAPI_updated_item_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_updated_item_s OpenAPI_updated_item_t;
 #include "any_type.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_updated_item_s OpenAPI_updated_item_t;
-typedef struct OpenAPI_updated_item_s {
+struct OpenAPI_updated_item_s {
     char *item;
-    bool is_value_null;
     OpenAPI_any_type_t *value;
-} OpenAPI_updated_item_t;
+};
 
 OpenAPI_updated_item_t *OpenAPI_updated_item_create(
     char *item,
-    bool is_value_null,
     OpenAPI_any_type_t *value
 );
 void OpenAPI_updated_item_free(OpenAPI_updated_item_t *updated_item);

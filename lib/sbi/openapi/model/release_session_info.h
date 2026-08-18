@@ -8,21 +8,21 @@
 #define _OpenAPI_release_session_info_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_release_session_info_s OpenAPI_release_session_info_t;
 #include "release_cause.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_release_session_info_s OpenAPI_release_session_info_t;
-typedef struct OpenAPI_release_session_info_s {
+struct OpenAPI_release_session_info_s {
     OpenAPI_list_t *release_session_list;
     OpenAPI_release_cause_e release_cause;
-} OpenAPI_release_session_info_t;
+};
 
 OpenAPI_release_session_info_t *OpenAPI_release_session_info_create(
     OpenAPI_list_t *release_session_list,

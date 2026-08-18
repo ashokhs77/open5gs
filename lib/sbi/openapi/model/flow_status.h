@@ -1,14 +1,14 @@
 /*
  * flow_status.h
  *
- * 
+ * Describes whether the IP flow(s) are enabled or disabled.
  */
 
 #ifndef _OpenAPI_flow_status_H_
 #define _OpenAPI_flow_status_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

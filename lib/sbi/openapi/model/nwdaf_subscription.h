@@ -8,21 +8,21 @@
 #define _OpenAPI_nwdaf_subscription_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_nwdaf_subscription_s OpenAPI_nwdaf_subscription_t;
 #include "nnwdaf_events_subscription.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_nwdaf_subscription_s OpenAPI_nwdaf_subscription_t;
-typedef struct OpenAPI_nwdaf_subscription_s {
+struct OpenAPI_nwdaf_subscription_s {
     char *nwdaf_evt_subs_service_uri;
     struct OpenAPI_nnwdaf_events_subscription_s *nwdaf_events_subscription;
-} OpenAPI_nwdaf_subscription_t;
+};
 
 OpenAPI_nwdaf_subscription_t *OpenAPI_nwdaf_subscription_create(
     char *nwdaf_evt_subs_service_uri,

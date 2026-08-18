@@ -1,14 +1,14 @@
 /*
  * pdu_session_rel_cause.h
  *
- * 
+ * Contains the SMF PDU Session release cause.
  */
 
 #ifndef _OpenAPI_pdu_session_rel_cause_H_
 #define _OpenAPI_pdu_session_rel_cause_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

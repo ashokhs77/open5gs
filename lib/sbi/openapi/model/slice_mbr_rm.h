@@ -1,29 +1,27 @@
 /*
  * slice_mbr_rm.h
  *
- * SliceMbr with nullable: true
+ * 
  */
 
 #ifndef _OpenAPI_slice_mbr_rm_H_
 #define _OpenAPI_slice_mbr_rm_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
-#include "null_value.h"
-#include "slice_mbr.h"
+typedef struct OpenAPI_slice_mbr_rm_s OpenAPI_slice_mbr_rm_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_slice_mbr_rm_s OpenAPI_slice_mbr_rm_t;
-typedef struct OpenAPI_slice_mbr_rm_s {
+struct OpenAPI_slice_mbr_rm_s {
     char *uplink;
     char *downlink;
-} OpenAPI_slice_mbr_rm_t;
+};
 
 OpenAPI_slice_mbr_rm_t *OpenAPI_slice_mbr_rm_create(
     char *uplink,

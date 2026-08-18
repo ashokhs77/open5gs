@@ -1,14 +1,14 @@
 /*
  * sponsoring_status.h
  *
- * 
+ * Indicates whether sponsored data connectivity is enabled or disabled/not enabled.
  */
 
 #ifndef _OpenAPI_sponsoring_status_H_
 #define _OpenAPI_sponsoring_status_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

@@ -1,14 +1,14 @@
 /*
  * sip_forking_indication.h
  *
- * 
+ * Indicates whether several SIP dialogues are related to an \&quot;Individual Application Session Context\&quot; resource. 
  */
 
 #ifndef _OpenAPI_sip_forking_indication_H_
 #define _OpenAPI_sip_forking_indication_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

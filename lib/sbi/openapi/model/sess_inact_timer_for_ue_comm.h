@@ -8,20 +8,20 @@
 #define _OpenAPI_sess_inact_timer_for_ue_comm_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_sess_inact_timer_for_ue_comm_s OpenAPI_sess_inact_timer_for_ue_comm_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_sess_inact_timer_for_ue_comm_s OpenAPI_sess_inact_timer_for_ue_comm_t;
-typedef struct OpenAPI_sess_inact_timer_for_ue_comm_s {
+struct OpenAPI_sess_inact_timer_for_ue_comm_s {
     int n4_sess_id;
     int sess_inactive_timer;
-} OpenAPI_sess_inact_timer_for_ue_comm_t;
+};
 
 OpenAPI_sess_inact_timer_for_ue_comm_t *OpenAPI_sess_inact_timer_for_ue_comm_create(
     int n4_sess_id,

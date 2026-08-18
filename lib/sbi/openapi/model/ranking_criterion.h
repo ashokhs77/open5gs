@@ -8,20 +8,20 @@
 #define _OpenAPI_ranking_criterion_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_ranking_criterion_s OpenAPI_ranking_criterion_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_ranking_criterion_s OpenAPI_ranking_criterion_t;
-typedef struct OpenAPI_ranking_criterion_s {
+struct OpenAPI_ranking_criterion_s {
     int high_base;
     int low_base;
-} OpenAPI_ranking_criterion_t;
+};
 
 OpenAPI_ranking_criterion_t *OpenAPI_ranking_criterion_create(
     int high_base,

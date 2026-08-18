@@ -1,27 +1,27 @@
 /*
  * spatial_validity_rm.h
  *
- * This data type is defined in the same way as the SpatialValidity data type, but with the OpenAPI nullable property set to true.
+ * This data type is defined in the same way as the SpatialValidity data type, but with the OpenAPI nullable property set to true. 
  */
 
 #ifndef _OpenAPI_spatial_validity_rm_H_
 #define _OpenAPI_spatial_validity_rm_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_spatial_validity_rm_s OpenAPI_spatial_validity_rm_t;
 #include "presence_info.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_spatial_validity_rm_s OpenAPI_spatial_validity_rm_t;
-typedef struct OpenAPI_spatial_validity_rm_s {
+struct OpenAPI_spatial_validity_rm_s {
     OpenAPI_list_t* presence_info_list;
-} OpenAPI_spatial_validity_rm_t;
+};
 
 OpenAPI_spatial_validity_rm_t *OpenAPI_spatial_validity_rm_create(
     OpenAPI_list_t* presence_info_list

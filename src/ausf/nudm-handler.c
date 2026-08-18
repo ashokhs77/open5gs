@@ -170,8 +170,8 @@ bool ausf_nudm_ueau_handle_get(ausf_ue_t *ausf_ue,
 
     /* SUPI */
     if (ausf_ue->supi) {
-        ogs_hash_set(ausf_self()->supi_hash,
-                ausf_ue->supi, strlen(ausf_ue->supi), NULL);
+        ogs_hash_unset_if_owner(ausf_self()->supi_hash,
+                ausf_ue->supi, strlen(ausf_ue->supi), ausf_ue);
         ogs_free(ausf_ue->supi);
     }
     ausf_ue->supi = ogs_strdup(AuthenticationInfoResult->supi);
@@ -213,7 +213,8 @@ bool ausf_nudm_ueau_handle_get(ausf_ue_t *ausf_ue,
     memset(&LinksValueSchemeValue, 0, sizeof(LinksValueSchemeValue));
 
     memset(&header, 0, sizeof(header));
-    header.service.name = (char *)OGS_SBI_SERVICE_NAME_NAUSF_AUTH;
+    header.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nausf_auth);
     header.api.version = (char *)OGS_SBI_API_V1;
     header.resource.component[0] =
             (char *)OGS_SBI_RESOURCE_NAME_UE_AUTHENTICATIONS;
@@ -233,7 +234,8 @@ bool ausf_nudm_ueau_handle_get(ausf_ue_t *ausf_ue,
     memset(&sendmsg, 0, sizeof(sendmsg));
 
     memset(&header, 0, sizeof(header));
-    header.service.name = (char *)OGS_SBI_SERVICE_NAME_NAUSF_AUTH;
+    header.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nausf_auth);
     header.api.version = (char *)OGS_SBI_API_V1;
     header.resource.component[0] =
             (char *)OGS_SBI_RESOURCE_NAME_UE_AUTHENTICATIONS;

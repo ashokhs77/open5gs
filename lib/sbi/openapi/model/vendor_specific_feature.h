@@ -8,20 +8,20 @@
 #define _OpenAPI_vendor_specific_feature_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_vendor_specific_feature_s OpenAPI_vendor_specific_feature_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_vendor_specific_feature_s OpenAPI_vendor_specific_feature_t;
-typedef struct OpenAPI_vendor_specific_feature_s {
+struct OpenAPI_vendor_specific_feature_s {
     char *feature_name;
     char *feature_version;
-} OpenAPI_vendor_specific_feature_t;
+};
 
 OpenAPI_vendor_specific_feature_t *OpenAPI_vendor_specific_feature_create(
     char *feature_name,

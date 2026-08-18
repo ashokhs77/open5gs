@@ -1,29 +1,29 @@
 /*
  * sms_subscription_data.h
  *
- * 
+ * Contains SMS Subscription Data
  */
 
 #ifndef _OpenAPI_sms_subscription_data_H_
 #define _OpenAPI_sms_subscription_data_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_sms_subscription_data_s OpenAPI_sms_subscription_data_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_sms_subscription_data_s OpenAPI_sms_subscription_data_t;
-typedef struct OpenAPI_sms_subscription_data_s {
+struct OpenAPI_sms_subscription_data_s {
     bool is_sms_subscribed;
     int sms_subscribed;
     char *shared_sms_subs_data_id;
     char *supported_features;
-} OpenAPI_sms_subscription_data_t;
+};
 
 OpenAPI_sms_subscription_data_t *OpenAPI_sms_subscription_data_create(
     bool is_sms_subscribed,

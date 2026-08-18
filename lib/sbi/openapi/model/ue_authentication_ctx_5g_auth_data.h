@@ -8,22 +8,22 @@
 #define _OpenAPI_ue_authentication_ctx_5g_auth_data_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_ue_authentication_ctx_5g_auth_data_s OpenAPI_ue_authentication_ctx_5g_auth_data_t;
 #include "av5g_aka.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_ue_authentication_ctx_5g_auth_data_s OpenAPI_ue_authentication_ctx_5g_auth_data_t;
-typedef struct OpenAPI_ue_authentication_ctx_5g_auth_data_s {
+struct OpenAPI_ue_authentication_ctx_5g_auth_data_s {
     char *rand;
     char *hxres_star;
     char *autn;
-} OpenAPI_ue_authentication_ctx_5g_auth_data_t;
+};
 
 OpenAPI_ue_authentication_ctx_5g_auth_data_t *OpenAPI_ue_authentication_ctx_5g_auth_data_create(
     char *rand,

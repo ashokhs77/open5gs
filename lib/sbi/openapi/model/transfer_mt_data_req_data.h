@@ -8,20 +8,20 @@
 #define _OpenAPI_transfer_mt_data_req_data_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_transfer_mt_data_req_data_s OpenAPI_transfer_mt_data_req_data_t;
 #include "ref_to_binary_data.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_transfer_mt_data_req_data_s OpenAPI_transfer_mt_data_req_data_t;
-typedef struct OpenAPI_transfer_mt_data_req_data_s {
+struct OpenAPI_transfer_mt_data_req_data_s {
     struct OpenAPI_ref_to_binary_data_s *mt_data;
-} OpenAPI_transfer_mt_data_req_data_t;
+};
 
 OpenAPI_transfer_mt_data_req_data_t *OpenAPI_transfer_mt_data_req_data_create(
     OpenAPI_ref_to_binary_data_t *mt_data

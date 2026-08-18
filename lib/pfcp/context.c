@@ -905,16 +905,12 @@ ogs_pfcp_node_t *ogs_pfcp_node_new(ogs_sockaddr_t *config_addr)
     ogs_list_init(&node->local_list);
     ogs_list_init(&node->remote_list);
 
-    ogs_list_init(&node->gtpu_resource_list);
-
     return node;
 }
 
 void ogs_pfcp_node_free(ogs_pfcp_node_t *node)
 {
     ogs_assert(node);
-
-    ogs_gtpu_resource_remove_all(&node->gtpu_resource_list);
 
     ogs_pfcp_xact_delete_all(node);
 
@@ -1220,6 +1216,20 @@ int ogs_pfcp_setup_far_gtpu_node(ogs_pfcp_far_t *far)
                 ogs_gtp_self()->gtpu_sock, ogs_gtp_self()->gtpu_sock6, gnode);
         if (rv != OGS_OK) {
             ogs_error("ogs_gtp_connect() failed");
+            /*
+             * ogs_gtp_node_new() zeroes gnode->addr, and only a successful
+             * ogs_gtp_connect() fills it in. On failure the node stays in
+             * gtpu_peer_list with ogs_sa_family == 0, so the next request
+             * carrying the same IP address finds it through
+             * ogs_gtp_node_find_by_ip(), skips ogs_gtp_connect() entirely
+             * and reaches ogs_pfcp_far_f_teid_hash_set(), which aborts:
+             *
+             *   [pfcp] FATAL: Unknown family(0) (../lib/pfcp/context.c)
+             *
+             * OGS_SETUP_GTP_NODE() has not run yet, so no FAR references
+             * this node and removing it here is safe.
+             */
+            ogs_gtp_node_remove(&ogs_gtp_self()->gtpu_peer_list, gnode);
             return rv;
         }
     }
@@ -1259,6 +1269,8 @@ int ogs_pfcp_setup_pdr_gtpu_node(ogs_pfcp_pdr_t *pdr)
                 ogs_gtp_self()->gtpu_sock, ogs_gtp_self()->gtpu_sock6, gnode);
         if (rv != OGS_OK) {
             ogs_error("ogs_gtp_connect() failed");
+            /* Same rollback as ogs_pfcp_setup_far_gtpu_node() */
+            ogs_gtp_node_remove(&ogs_gtp_self()->gtpu_peer_list, gnode);
             return rv;
         }
     }
@@ -1275,6 +1287,27 @@ void ogs_pfcp_sess_clear(ogs_pfcp_sess_t *sess)
     ogs_pfcp_urr_remove_all(sess);
     ogs_pfcp_qer_remove_all(sess);
     if (sess->bar) ogs_pfcp_bar_delete(sess->bar);
+}
+
+static void pdr_log_state(ogs_pfcp_sess_t *sess, const char *reason)
+{
+    ogs_pfcp_pdr_t *pdr = NULL;
+
+    ogs_assert(sess);
+    ogs_assert(reason);
+
+    ogs_error("%s [PDR:%d/%d] [PDR-ID-available:%lld] "
+            "[PDR-pool-available:%lld] [PDR-TEID-pool-available:%lld]",
+            reason, ogs_list_count(&sess->pdr_list), OGS_MAX_NUM_OF_PDR,
+            (long long)sess->pdr_id_pool.avail,
+            (long long)ogs_pfcp_pdr_pool.avail,
+            (long long)ogs_pfcp_pdr_teid_pool.avail);
+
+    ogs_list_for_each(&sess->pdr_list, pdr) {
+        ogs_error("    PDR [id:%u] [teid:0x%x] [src-if:%d] [FAR-id:%u]",
+                (unsigned)pdr->id, pdr->teid, pdr->src_if,
+                pdr->far ? (unsigned)pdr->far->id : 0);
+    }
 }
 
 static int precedence_compare(ogs_pfcp_pdr_t *pdr1, ogs_pfcp_pdr_t *pdr2)
@@ -1295,7 +1328,7 @@ ogs_pfcp_pdr_t *ogs_pfcp_pdr_add(ogs_pfcp_sess_t *sess)
 
     ogs_pool_alloc(&ogs_pfcp_pdr_pool, &pdr);
     if (pdr == NULL) {
-        ogs_error("pdr_pool() failed");
+        pdr_log_state(sess, "PDR pool exhausted");
         return NULL;
     }
     memset(pdr, 0, sizeof *pdr);
@@ -1305,15 +1338,20 @@ ogs_pfcp_pdr_t *ogs_pfcp_pdr_add(ogs_pfcp_sess_t *sess)
 
     /* Set TEID */
     ogs_pool_alloc(&ogs_pfcp_pdr_teid_pool, &pdr->teid_node);
-    ogs_assert(pdr->teid_node);
+    if (pdr->teid_node == NULL) {
+        ogs_pool_free(&ogs_pfcp_pdr_pool, pdr);
+        pdr_log_state(sess, "PDR TEID pool exhausted");
+        return NULL;
+    }
 
     pdr->teid = *(pdr->teid_node);
 
     /* Set PDR-ID */
     ogs_pool_alloc(&sess->pdr_id_pool, &pdr->id_node);
     if (pdr->id_node == NULL) {
-        ogs_error("pdr_id_pool() failed");
+        ogs_pool_free(&ogs_pfcp_pdr_teid_pool, pdr->teid_node);
         ogs_pool_free(&ogs_pfcp_pdr_pool, pdr);
+        pdr_log_state(sess, "PDR ID pool exhausted");
         return NULL;
     }
 

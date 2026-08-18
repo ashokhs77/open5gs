@@ -1,28 +1,28 @@
 /*
  * edrx_parameters.h
  *
- * 
+ * Contains eDRX parameters
  */
 
 #ifndef _OpenAPI_edrx_parameters_H_
 #define _OpenAPI_edrx_parameters_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_edrx_parameters_s OpenAPI_edrx_parameters_t;
 #include "rat_type.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_edrx_parameters_s OpenAPI_edrx_parameters_t;
-typedef struct OpenAPI_edrx_parameters_s {
+struct OpenAPI_edrx_parameters_s {
     OpenAPI_rat_type_e rat_type;
     char *edrx_value;
-} OpenAPI_edrx_parameters_t;
+};
 
 OpenAPI_edrx_parameters_t *OpenAPI_edrx_parameters_create(
     OpenAPI_rat_type_e rat_type,

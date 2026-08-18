@@ -8,17 +8,17 @@
 #define _OpenAPI_small_data_rate_status_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_small_data_rate_status_s OpenAPI_small_data_rate_status_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_small_data_rate_status_s OpenAPI_small_data_rate_status_t;
-typedef struct OpenAPI_small_data_rate_status_s {
+struct OpenAPI_small_data_rate_status_s {
     bool is_remain_packets_ul;
     int remain_packets_ul;
     bool is_remain_packets_dl;
@@ -28,7 +28,7 @@ typedef struct OpenAPI_small_data_rate_status_s {
     int remain_ex_reports_ul;
     bool is_remain_ex_reports_dl;
     int remain_ex_reports_dl;
-} OpenAPI_small_data_rate_status_t;
+};
 
 OpenAPI_small_data_rate_status_t *OpenAPI_small_data_rate_status_create(
     bool is_remain_packets_ul,

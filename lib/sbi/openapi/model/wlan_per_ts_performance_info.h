@@ -8,30 +8,31 @@
 #define _OpenAPI_wlan_per_ts_performance_info_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_wlan_per_ts_performance_info_s OpenAPI_wlan_per_ts_performance_info_t;
 #include "traffic_information.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_wlan_per_ts_performance_info_s OpenAPI_wlan_per_ts_performance_info_t;
-typedef struct OpenAPI_wlan_per_ts_performance_info_s {
+struct OpenAPI_wlan_per_ts_performance_info_s {
     char *ts_start;
     int ts_duration;
     bool is_rssi;
     int rssi;
     bool is_rtt;
     int rtt;
+    bool is_traffic_info_null;
     struct OpenAPI_traffic_information_s *traffic_info;
     bool is_number_of_ues;
     int number_of_ues;
     bool is_confidence;
     int confidence;
-} OpenAPI_wlan_per_ts_performance_info_t;
+};
 
 OpenAPI_wlan_per_ts_performance_info_t *OpenAPI_wlan_per_ts_performance_info_create(
     char *ts_start,
@@ -40,6 +41,7 @@ OpenAPI_wlan_per_ts_performance_info_t *OpenAPI_wlan_per_ts_performance_info_cre
     int rssi,
     bool is_rtt,
     int rtt,
+    bool is_traffic_info_null,
     OpenAPI_traffic_information_t *traffic_info,
     bool is_number_of_ues,
     int number_of_ues,

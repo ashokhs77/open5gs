@@ -1,28 +1,28 @@
 /*
  * ip_address_1.h
  *
- * 
+ * IP Address
  */
 
 #ifndef _OpenAPI_ip_address_1_H_
 #define _OpenAPI_ip_address_1_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_ip_address_1_s OpenAPI_ip_address_1_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_ip_address_1_s OpenAPI_ip_address_1_t;
-typedef struct OpenAPI_ip_address_1_s {
+struct OpenAPI_ip_address_1_s {
     char *ipv4_addr;
     char *ipv6_addr;
     char *ipv6_prefix;
-} OpenAPI_ip_address_1_t;
+};
 
 OpenAPI_ip_address_1_t *OpenAPI_ip_address_1_create(
     char *ipv4_addr,

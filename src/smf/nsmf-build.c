@@ -132,7 +132,8 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_create_data(
             OpenAPI_request_type_EXISTING_EMERGENCY_PDU_SESSION)
         PduSessionCreateData.request_type = sess->request_type;
 
-    header.service.name = (char *)OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION;
+    header.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nsmf_pdusession);
     header.api.version = (char *)OGS_SBI_API_V1;
     header.resource.component[0] =
         (char *)OGS_SBI_RESOURCE_NAME_VSMF_PDU_SESSIONS;
@@ -575,13 +576,14 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_vsmf_update_data(
                     goto end;
                 }
 
-                enc_len = ogs_base64_encode_len(authorized_qos_rules.length);
+                enc_len = ogs_base64_encoded_size(authorized_qos_rules.length);
+                ogs_assert(enc_len > 0);
                 encoded_qos_rules = ogs_calloc(1, enc_len);
                 ogs_assert(encoded_qos_rules);
-                ogs_base64_encode(
-                        encoded_qos_rules,
+                ogs_assert(ogs_base64_encode_from_buffer(
+                        encoded_qos_rules, enc_len,
                         authorized_qos_rules.buffer,
-                        authorized_qos_rules.length);
+                        authorized_qos_rules.length) > 0);
 
                 ogs_free(authorized_qos_rules.buffer);
             }
@@ -607,14 +609,15 @@ ogs_sbi_request_t *smf_nsmf_pdusession_build_vsmf_update_data(
                     goto end;
                 }
 
-                enc_len = ogs_base64_encode_len(
+                enc_len = ogs_base64_encoded_size(
                         authorized_qos_flow_descriptions.length);
+                ogs_assert(enc_len > 0);
                 encoded_qos_flow_description = ogs_calloc(1, enc_len);
                 ogs_assert(encoded_qos_flow_description);
-                ogs_base64_encode(
-                        encoded_qos_flow_description,
+                ogs_assert(ogs_base64_encode_from_buffer(
+                        encoded_qos_flow_description, enc_len,
                         authorized_qos_flow_descriptions.buffer,
-                        authorized_qos_flow_descriptions.length);
+                        authorized_qos_flow_descriptions.length) > 0);
 
                 ogs_free(authorized_qos_flow_descriptions.buffer);
             }

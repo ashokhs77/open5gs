@@ -745,11 +745,61 @@ void sgwc_s11_handle_delete_session_request(
      ********************/
     ogs_assert(sgwc_ue);
     ogs_assert(sess);
-    ogs_assert(sess->gnode);
     ogs_info("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
         sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
     ogs_info("    SGW_S5C_TEID[0x%x] PGW_S5C_TEID[0x%x]",
         sess->sgw_s5c_teid, sess->pgw_s5c_teid);
+
+    if (!sess->gnode) {
+        /*
+         * The PGW(SMF) S5/S8 GTP-C peer for this session was never
+         * established (e.g. the Create Session toward the PGW never
+         * completed), so the Delete Session Request cannot be forwarded
+         * to the PGW.
+         *
+         * Instead of aborting, tear down the local SGW-U(PFCP) state so
+         * that stale F-TEIDs do not linger on the SGW-U, and answer the
+         * MME. The Sxa Session Deletion Response handler converts the
+         * carried Delete Session Request into a Delete Session Response,
+         * sends it to the MME and removes the session context.
+         */
+        ogs_error("No PGW GTP-C peer; deleting session locally "
+                "[IMSI:%s, EBI:%d]",
+                sgwc_ue->imsi_bcd, req->linked_eps_bearer_id.u8);
+
+        if (sess->pfcp_node) {
+            ogs_assert(OGS_OK ==
+                sgwc_pfcp_send_session_deletion_request(
+                    sess, s11_xact->id, gtpbuf));
+        } else {
+            /*
+             * No SGW-U(PFCP) peer either: there is no reachable SGW-U,
+             * so there are no orphan F-TEIDs to clean up remotely and
+             * nothing can leak. Acknowledge the MME and drop the local
+             * context.
+             *
+             * Cause is REQUEST_ACCEPTED (not an error) because the
+             * session WAS found and IS being deleted here; the MME's
+             * Delete Session Request is fully satisfied. Returning an
+             * error cause would be inaccurate and could make the MME
+             * retry or leave its bearer context stuck.
+             *
+             * NOTE: ogs_gtp_send_error_message() is just the generic
+             * helper for building a cause-only GTP-C response; despite
+             * the name it is the idiomatic way to emit this minimal
+             * Delete Session Response (see the cleanup: path below).
+             */
+            ogs_error("No SGW-U PFCP peer; removing session context "
+                    "[IMSI:%s, EBI:%d]",
+                    sgwc_ue->imsi_bcd, req->linked_eps_bearer_id.u8);
+            ogs_gtp_send_error_message(
+                    s11_xact, sgwc_ue->mme_s11_teid,
+                    OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE,
+                    OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
+            sgwc_sess_remove(sess);
+        }
+        return;
+    }
 
     if (indication &&
         indication->operation_indication == 0 &&
@@ -1225,10 +1275,11 @@ void sgwc_s11_handle_delete_bearer_response(
      ********************/
     ogs_assert(s11_xact);
     s5c_xact = ogs_gtp_xact_find_by_id(s11_xact->assoc_xact_id);
-    ogs_assert(s5c_xact);
+    /* s5c_xact may be NULL; handled after the transaction is committed. */
 
     if (s11_xact->xid & OGS_GTP_CMD_XACT_ID) {
         /* MME received Bearer Resource Modification Request */
+        ogs_assert(s5c_xact);
         ogs_assert(s5c_xact->data);
         bearer_id = OGS_POINTER_TO_UINT(s5c_xact->data);
         ogs_assert(bearer_id >= OGS_MIN_POOL_ID &&
@@ -1263,6 +1314,55 @@ void sgwc_s11_handle_delete_bearer_response(
     rv = ogs_gtp_xact_commit(s11_xact);
     ogs_expect(rv == OGS_OK);
 
+    if (!s5c_xact) {
+        /*
+         * The S5-C transaction of a relayed (PGW-initiated) Delete
+         * Bearer Request has already expired, e.g. the Delete Bearer
+         * Response was delayed by paging an ECM-IDLE UE. There is
+         * nothing to relay back to the PGW anymore, but the local PFCP
+         * session/bearer removal still has to be completed. (This
+         * previously hit ogs_assert(s5c_xact) and crashed the SGW-C.)
+         */
+        ogs_warn("S5-C transaction has already been removed");
+        if (!bearer || !sess) {
+            ogs_error("No Bearer/Session context after S5-C transaction "
+                    "expiry; nothing to clean up");
+            return;
+        }
+
+        /*
+         * The Cause is logged for observability only, mirroring the
+         * normal relay path below: the local PFCP removal is performed
+         * regardless of the Cause. This is PGW-initiated bearer
+         * deactivation - the PGW deletes its side of the bearer in any
+         * case, so keeping the local state on a failure Cause would
+         * leave the SGW forwarding into a dead S5-U tunnel.
+         */
+        if (rsp->cause.presence) {
+            ogs_gtp2_cause_t *cause = rsp->cause.data;
+            ogs_assert(cause);
+            if (cause->value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
+                ogs_error("GTP Cause [Value:%d]", cause->value);
+        } else
+            ogs_error("No Cause");
+
+        /*
+         * The Linked EPS Bearer ID may be absent from the Response even
+         * though the Request carried it - see the comment in the normal
+         * relay path below. Decide from the local bearer context.
+         */
+        if (bearer == sgwc_default_bearer_in_sess(sess))
+            ogs_assert(OGS_OK ==
+                sgwc_pfcp_send_session_deletion_request(
+                    sess, OGS_INVALID_POOL_ID, NULL));
+        else
+            ogs_assert(OGS_OK ==
+                sgwc_pfcp_send_bearer_modification_request(
+                    bearer, OGS_INVALID_POOL_ID, NULL,
+                    OGS_PFCP_MODIFY_REMOVE));
+        return;
+    }
+
     /************************
      * Check SGWC-UE Context
      ************************/
@@ -1284,9 +1384,9 @@ void sgwc_s11_handle_delete_bearer_response(
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
         goto cleanup;
 
-    if (rsp->linked_eps_bearer_id.presence) {
+    if (bearer == sgwc_default_bearer_in_sess(sess)) {
        /*
-        * << Linked EPS Bearer ID >>
+        * << DEFAULT BEARER >>
         *
         * 1. SMF sends Delete Bearer Request(DEFAULT BEARER) to SGW/MME.
         * 2. MME sends Delete Bearer Response to SGW/SMF.
@@ -1295,6 +1395,19 @@ void sgwc_s11_handle_delete_bearer_response(
         *
         * 1. SMF sends Delete Bearer Request(DEFAULT BEARER) to ePDG.
         * 2. ePDG sends Delete Bearer Response(DEFAULT BEARER) to SMF.
+        *
+        * This used to be decided by the Linked EPS Bearer ID of the
+        * Response, but the peer is not required to echo it when it rejects
+        * the procedure: an MME that cannot page an ECM-IDLE UE answers with
+        * a Cause-only Delete Bearer Response. The deletion of the PDN
+        * connection then took the dedicated bearer path below, which
+        * removed the default bearer while leaving an empty sgwc_sess_t in
+        * sgwc_ue->sess_list.
+        *
+        * The bearer comes from the transaction of the Delete Bearer Request
+        * that the SGW-C relayed, so the local context alone identifies the
+        * procedure. This matches how the Error Indication is handled in
+        * sgwc_sxa_handle_session_report_request().
         */
         if (rsp->cause.presence) {
             ogs_gtp2_cause_t *cause = rsp->cause.data;
@@ -1314,7 +1427,7 @@ void sgwc_s11_handle_delete_bearer_response(
                 sess, s5c_xact->id, gtpbuf));
     } else {
        /*
-        * << EPS Bearer IDs >>
+        * << DEDICATED BEARER >>
         *
         * 1. MME sends Bearer Resource Command to SGW/SMF.
         * 2. SMF sends Delete Bearer Request(DEDICATED BEARER) to SGW/MME.
@@ -1419,6 +1532,17 @@ void sgwc_s11_handle_release_access_bearers_request(
 
     ogs_list_for_each(&sgwc_ue->sess_list, sess) {
 
+        /*
+         * A PDN connection is never expected to lose its last bearer while
+         * staying in sgwc_ue->sess_list. Keep the assert, but identify the
+         * PDN connection first - the assert alone does not tell which one
+         * it was.
+         */
+        if (ogs_list_count(&sess->bearer_list) == 0)
+            ogs_fatal("No Bearer [imsi:%s sess_id:%d apn:%s "
+                    "sgw_s5c_teid:0x%x pgw_s5c_teid:0x%x]",
+                    sgwc_ue->imsi_bcd, sess->id, sess->session.name,
+                    sess->sgw_s5c_teid, sess->pgw_s5c_teid);
         ogs_assert(ogs_list_count(&sess->bearer_list));
         ogs_info("    sess_id=%d xact=%p", sess->id, s11_xact);
         ogs_assert(OGS_OK ==
@@ -1577,12 +1701,29 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
             req_teid = req->bearer_contexts[i].s1_u_enodeb_f_teid.data;
             ogs_assert(req_teid);
 
-            tunnel = sgwc_tunnel_add(bearer,
+            /*
+             * If the indirect data forwarding tunnel of the previous
+             * handover has not been deleted -- the MME does not always
+             * send Delete Indirect Data Forwarding Tunnel Request --
+             * re-use it.
+             *
+             * OGS_MAX_NUM_OF_PDR is dimensioned for a single forwarding
+             * pair per bearer, so allocating a new PDR/FAR on every
+             * handover exhausts the PDR pool of the session.
+             */
+            tunnel = sgwc_tunnel_find_by_interface_type(bearer,
                     OGS_GTP2_F_TEID_SGW_GTP_U_FOR_DL_DATA_FORWARDING);
-            if (!tunnel) {
-                ogs_error("sgwc_tunnel_add() failed");
-                cause_value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
-                goto cleanup;
+            if (tunnel) {
+                ogs_error("[%s] Re-use indirect DL tunnel [EBI:%d]",
+                        sgwc_ue->imsi_bcd, bearer->ebi);
+            } else {
+                tunnel = sgwc_tunnel_add(bearer,
+                        OGS_GTP2_F_TEID_SGW_GTP_U_FOR_DL_DATA_FORWARDING);
+                if (!tunnel) {
+                    ogs_error("sgwc_tunnel_add() failed");
+                    cause_value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
+                    goto cleanup;
+                }
             }
 
             tunnel->remote_teid = be32toh(req_teid->teid);
@@ -1625,12 +1766,20 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
             req_teid = req->bearer_contexts[i].s12_rnc_f_teid.data;
             ogs_assert(req_teid);
 
-            tunnel = sgwc_tunnel_add(bearer,
+            /* See the comment on the DL data forwarding tunnel above */
+            tunnel = sgwc_tunnel_find_by_interface_type(bearer,
                     OGS_GTP2_F_TEID_SGW_GTP_U_FOR_UL_DATA_FORWARDING);
-            if (!tunnel) {
-                ogs_error("sgwc_tunnel_add() failed");
-                cause_value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
-                goto cleanup;
+            if (tunnel) {
+                ogs_error("[%s] Re-use indirect UL tunnel [EBI:%d]",
+                        sgwc_ue->imsi_bcd, bearer->ebi);
+            } else {
+                tunnel = sgwc_tunnel_add(bearer,
+                        OGS_GTP2_F_TEID_SGW_GTP_U_FOR_UL_DATA_FORWARDING);
+                if (!tunnel) {
+                    ogs_error("sgwc_tunnel_add() failed");
+                    cause_value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
+                    goto cleanup;
+                }
             }
 
             tunnel->remote_teid = be32toh(req_teid->teid);
@@ -1673,6 +1822,11 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
     ogs_list_for_each(&sgwc_ue->sess_list, sess) {
         bool has_indirect = false;
 
+        if (ogs_list_count(&sess->bearer_list) == 0)
+            ogs_fatal("No Bearer [imsi:%s sess_id:%d apn:%s "
+                    "sgw_s5c_teid:0x%x pgw_s5c_teid:0x%x]",
+                    sgwc_ue->imsi_bcd, sess->id, sess->session.name,
+                    sess->sgw_s5c_teid, sess->pgw_s5c_teid);
         ogs_assert(ogs_list_count(&sess->bearer_list));
         ogs_list_for_each(&sess->bearer_list, bearer) {
             ogs_list_for_each(&bearer->tunnel_list, tunnel) {
@@ -1881,8 +2035,23 @@ void sgwc_s11_handle_bearer_resource_command(
     ogs_assert(bearer);
     sess = sgwc_sess_find_by_id(bearer->sess_id);
     ogs_assert(sess);
-    ogs_assert(sess->gnode);
     ogs_assert(sgwc_ue);
+
+    if (!sess->gnode) {
+        /*
+         * The PGW(SMF) S5/S8 GTP-C peer was never established for this
+         * session, so the Bearer Resource Command cannot be forwarded to
+         * the PGW. Reject the procedure towards the MME instead of
+         * aborting.
+         */
+        ogs_error("No PGW GTP-C peer; rejecting Bearer Resource Command "
+                "[IMSI:%s]", sgwc_ue->imsi_bcd);
+        ogs_gtp_send_error_message(
+                s11_xact, sgwc_ue->mme_s11_teid,
+                OGS_GTP2_BEARER_RESOURCE_FAILURE_INDICATION_TYPE,
+                OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
+        return;
+    }
 
     ogs_info("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
         sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);

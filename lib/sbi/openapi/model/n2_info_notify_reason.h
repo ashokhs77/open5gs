@@ -1,14 +1,14 @@
 /*
  * n2_info_notify_reason.h
  *
- * 
+ * N2 Information Notify Reason
  */
 
 #ifndef _OpenAPI_n2_info_notify_reason_H_
 #define _OpenAPI_n2_info_notify_reason_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

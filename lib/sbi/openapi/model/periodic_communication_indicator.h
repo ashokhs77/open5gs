@@ -1,14 +1,14 @@
 /*
  * periodic_communication_indicator.h
  *
- * 
+ * Indicates the Periodic Communication Indicator
  */
 
 #ifndef _OpenAPI_periodic_communication_indicator_H_
 #define _OpenAPI_periodic_communication_indicator_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

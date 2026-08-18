@@ -8,21 +8,21 @@
 #define _OpenAPI_plmn_oauth2_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_plmn_oauth2_s OpenAPI_plmn_oauth2_t;
 #include "plmn_id.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_plmn_oauth2_s OpenAPI_plmn_oauth2_t;
-typedef struct OpenAPI_plmn_oauth2_s {
+struct OpenAPI_plmn_oauth2_s {
     OpenAPI_list_t *oauth2_required_plmn_id_list;
     OpenAPI_list_t *oauth2_not_required_plmn_id_list;
-} OpenAPI_plmn_oauth2_t;
+};
 
 OpenAPI_plmn_oauth2_t *OpenAPI_plmn_oauth2_create(
     OpenAPI_list_t *oauth2_required_plmn_id_list,

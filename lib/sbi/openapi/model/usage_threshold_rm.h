@@ -1,24 +1,24 @@
 /*
  * usage_threshold_rm.h
  *
- * Represents the same as the UsageThreshold data type but with the nullable:true property.
+ * Represents the same as the UsageThreshold data type but with the nullable:true property. 
  */
 
 #ifndef _OpenAPI_usage_threshold_rm_H_
 #define _OpenAPI_usage_threshold_rm_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_usage_threshold_rm_s OpenAPI_usage_threshold_rm_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_usage_threshold_rm_s OpenAPI_usage_threshold_rm_t;
-typedef struct OpenAPI_usage_threshold_rm_s {
+struct OpenAPI_usage_threshold_rm_s {
     bool is_duration_null;
     bool is_duration;
     int duration;
@@ -31,7 +31,7 @@ typedef struct OpenAPI_usage_threshold_rm_s {
     bool is_uplink_volume_null;
     bool is_uplink_volume;
     long uplink_volume;
-} OpenAPI_usage_threshold_rm_t;
+};
 
 OpenAPI_usage_threshold_rm_t *OpenAPI_usage_threshold_rm_create(
     bool is_duration_null,

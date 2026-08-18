@@ -8,20 +8,20 @@
 #define _OpenAPI_spatial_validity_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_spatial_validity_s OpenAPI_spatial_validity_t;
 #include "presence_info.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_spatial_validity_s OpenAPI_spatial_validity_t;
-typedef struct OpenAPI_spatial_validity_s {
+struct OpenAPI_spatial_validity_s {
     OpenAPI_list_t* presence_info_list;
-} OpenAPI_spatial_validity_t;
+};
 
 OpenAPI_spatial_validity_t *OpenAPI_spatial_validity_create(
     OpenAPI_list_t* presence_info_list

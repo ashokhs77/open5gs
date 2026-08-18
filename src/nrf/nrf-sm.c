@@ -39,6 +39,7 @@ void nrf_state_final(ogs_fsm_t *s, nrf_event_t *e)
 void nrf_state_operational(ogs_fsm_t *s, nrf_event_t *e)
 {
     int rv;
+    int service_name_id = OpenAPI_service_name_NULL;
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_request_t *request = NULL;
@@ -95,8 +96,10 @@ void nrf_state_operational(ogs_fsm_t *s, nrf_event_t *e)
             break;
         }
 
-        SWITCH(message.h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NNRF_NFM)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                message.h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nnrf_nfm:
 
             SWITCH(message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_NF_INSTANCES)
@@ -120,19 +123,26 @@ void nrf_state_operational(ogs_fsm_t *s, nrf_event_t *e)
                     break;
 
                 DEFAULT
-                    if (message.h.resource.component[1]) {
-                        nf_instance = ogs_sbi_nf_instance_find(
-                                message.h.resource.component[1]);
+                    if (!message.h.resource.component[1]) {
+                        ogs_error("No NFInstanceId");
+                        ogs_assert(true ==
+                            ogs_sbi_server_send_error(stream,
+                                OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                                &message, "No NFInstanceId", NULL, NULL));
+                        break;
                     }
+
+                    nf_instance = ogs_sbi_nf_instance_find(
+                            message.h.resource.component[1]);
 
                     if (!nf_instance) {
                         SWITCH(message.h.method)
                         CASE(OGS_SBI_HTTP_METHOD_PUT)
-                            if (ogs_sbi_nf_instance_maximum_number_is_reached())
-                            {
-                                ogs_warn("Can't add instance [%s] "
-                                         "due to insufficient space",
-                                         message.h.resource.component[1]);
+                            nf_instance = ogs_sbi_nf_instance_add();
+                            if (!nf_instance) {
+                                ogs_error("Can't add instance [%s] "
+                                        "due to insufficient space",
+                                        message.h.resource.component[1]);
                                 ogs_assert(
                                     true ==
                                     ogs_sbi_server_send_error(
@@ -142,8 +152,6 @@ void nrf_state_operational(ogs_fsm_t *s, nrf_event_t *e)
                                         message.h.resource.component[1], NULL));
                                 break;
                             }
-                            nf_instance = ogs_sbi_nf_instance_add();
-                            ogs_assert(nf_instance);
                             ogs_sbi_nf_instance_set_id(nf_instance,
                                     message.h.resource.component[1]);
 
@@ -191,6 +199,14 @@ void nrf_state_operational(ogs_fsm_t *s, nrf_event_t *e)
                             ogs_error("[%s] State machine exception",
                                     nf_instance->id);
 
+                            /*
+                             * Handlers invoked from the NF FSM must not free
+                             * nf_instance before returning because the FSM
+                             * transition writes to &nf_instance->sm.  Cleanup
+                             * of failed registration/update attempts is
+                             * centralized here, after ogs_fsm_dispatch()
+                             * completes.
+                             */
                             nrf_nf_fsm_fini(nf_instance);
                             ogs_sbi_nf_instance_remove(nf_instance);
                         }
@@ -233,7 +249,7 @@ void nrf_state_operational(ogs_fsm_t *s, nrf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NNRF_DISC)
+        case OpenAPI_service_name_nnrf_disc:
 
             SWITCH(message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_NF_INSTANCES)
@@ -266,14 +282,14 @@ void nrf_state_operational(ogs_fsm_t *s, nrf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", message.h.service.name);
             ogs_assert(true ==
                 ogs_sbi_server_send_error(stream,
                     OGS_SBI_HTTP_STATUS_BAD_REQUEST, &message,
                     "Invalid API name", message.h.resource.component[0],
                     NULL));
-        END
+        }
 
         /* In lib/sbi/server.c, notify_completed() releases 'request' buffer. */
         ogs_sbi_message_free(&message);

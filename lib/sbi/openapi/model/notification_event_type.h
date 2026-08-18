@@ -1,14 +1,14 @@
 /*
  * notification_event_type.h
  *
- * 
+ * Types of events sent in notifications from NRF to subscribed NF Instances
  */
 
 #ifndef _OpenAPI_notification_event_type_H_
 #define _OpenAPI_notification_event_type_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-typedef enum { OpenAPI_notification_event_type_NULL = 0, OpenAPI_notification_event_type_NF_REGISTERED, OpenAPI_notification_event_type_NF_DEREGISTERED, OpenAPI_notification_event_type_NF_PROFILE_CHANGED } OpenAPI_notification_event_type_e;
+typedef enum { OpenAPI_notification_event_type_NULL = 0, OpenAPI_notification_event_type_NF_REGISTERED, OpenAPI_notification_event_type_NF_DEREGISTERED, OpenAPI_notification_event_type_NF_PROFILE_CHANGED, OpenAPI_notification_event_type_SHARED_DATA_CHANGED } OpenAPI_notification_event_type_e;
 
 char* OpenAPI_notification_event_type_ToString(OpenAPI_notification_event_type_e notification_event_type);
 

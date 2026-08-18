@@ -8,10 +8,11 @@
 #define _OpenAPI_arp_1_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_arp_1_s OpenAPI_arp_1_t;
 #include "preemption_capability.h"
 #include "preemption_vulnerability.h"
 
@@ -19,16 +20,13 @@
 extern "C" {
 #endif
 
-typedef struct OpenAPI_arp_1_s OpenAPI_arp_1_t;
-typedef struct OpenAPI_arp_1_s {
-    bool is_priority_level_null;
+struct OpenAPI_arp_1_s {
     int priority_level;
     OpenAPI_preemption_capability_e preempt_cap;
     OpenAPI_preemption_vulnerability_e preempt_vuln;
-} OpenAPI_arp_1_t;
+};
 
 OpenAPI_arp_1_t *OpenAPI_arp_1_create(
-    bool is_priority_level_null,
     int priority_level,
     OpenAPI_preemption_capability_e preempt_cap,
     OpenAPI_preemption_vulnerability_e preempt_vuln

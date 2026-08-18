@@ -206,6 +206,8 @@ bool udm_nudr_dr_handle_subscription_authentication(
                     0, sizeof(AuthenticationInfoResult));
 
             AuthenticationInfoResult.supi = udm_ue->supi;
+            if (!udm_ue->auth_type)
+                udm_ue->auth_type = OpenAPI_auth_type_5G_AKA;
             AuthenticationInfoResult.auth_type = udm_ue->auth_type;
 
             ogs_random(udm_ue->rand, OGS_RAND_LEN);
@@ -356,7 +358,8 @@ bool udm_nudr_dr_handle_subscription_authentication(
                     OGS_SBI_HTTP_STATUS_NO_CONTENT);
         } else {
             memset(&header, 0, sizeof(header));
-            header.service.name = (char *)OGS_SBI_SERVICE_NAME_NUDM_UEAU;
+            header.service.name =
+                OpenAPI_service_name_ToString(OpenAPI_service_name_nudm_ueau);
             header.api.version = (char *)OGS_SBI_API_V1;
             header.resource.component[0] = udm_ue->supi;
             header.resource.component[1] =
@@ -545,7 +548,8 @@ bool udm_nudr_dr_handle_subscription_context(
         memset(&sendmsg, 0, sizeof(sendmsg));
 
         memset(&header, 0, sizeof(header));
-        header.service.name = (char *)OGS_SBI_SERVICE_NAME_NUDM_UECM;
+        header.service.name =
+            OpenAPI_service_name_ToString(OpenAPI_service_name_nudm_uecm);
         header.api.version = (char *)OGS_SBI_API_V1;
         header.resource.component[0] = udm_ue->supi;
         header.resource.component[1] =
@@ -901,7 +905,8 @@ bool udm_nudr_dr_handle_smf_registration(
             memset(&sendmsg, 0, sizeof(sendmsg));
 
             memset(&header, 0, sizeof(header));
-            header.service.name = (char *)OGS_SBI_SERVICE_NAME_NUDM_UECM;
+            header.service.name =
+                OpenAPI_service_name_ToString(OpenAPI_service_name_nudm_uecm);
             header.api.version = (char *)OGS_SBI_API_V1;
             header.resource.component[0] = udm_ue->supi;
             header.resource.component[1] =

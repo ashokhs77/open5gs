@@ -1,28 +1,28 @@
 /*
  * ssc_modes.h
  *
- * 
+ * Contains a list of SSC Modes
  */
 
 #ifndef _OpenAPI_ssc_modes_H_
 #define _OpenAPI_ssc_modes_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_ssc_modes_s OpenAPI_ssc_modes_t;
 #include "ssc_mode.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_ssc_modes_s OpenAPI_ssc_modes_t;
-typedef struct OpenAPI_ssc_modes_s {
+struct OpenAPI_ssc_modes_s {
     OpenAPI_ssc_mode_e default_ssc_mode;
     OpenAPI_list_t *allowed_ssc_modes;
-} OpenAPI_ssc_modes_t;
+};
 
 OpenAPI_ssc_modes_t *OpenAPI_ssc_modes_create(
     OpenAPI_ssc_mode_e default_ssc_mode,

@@ -8,23 +8,23 @@
 #define _OpenAPI_ddd_traffic_descriptor_1_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_ddd_traffic_descriptor_1_s OpenAPI_ddd_traffic_descriptor_1_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_ddd_traffic_descriptor_1_s OpenAPI_ddd_traffic_descriptor_1_t;
-typedef struct OpenAPI_ddd_traffic_descriptor_1_s {
+struct OpenAPI_ddd_traffic_descriptor_1_s {
     char *ipv4_addr;
     char *ipv6_addr;
     bool is_port_number;
     int port_number;
     char *mac_addr;
-} OpenAPI_ddd_traffic_descriptor_1_t;
+};
 
 OpenAPI_ddd_traffic_descriptor_1_t *OpenAPI_ddd_traffic_descriptor_1_create(
     char *ipv4_addr,

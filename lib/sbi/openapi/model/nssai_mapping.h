@@ -8,21 +8,21 @@
 #define _OpenAPI_nssai_mapping_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_nssai_mapping_s OpenAPI_nssai_mapping_t;
 #include "snssai.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_nssai_mapping_s OpenAPI_nssai_mapping_t;
-typedef struct OpenAPI_nssai_mapping_s {
+struct OpenAPI_nssai_mapping_s {
     struct OpenAPI_snssai_s *mapped_snssai;
     struct OpenAPI_snssai_s *h_snssai;
-} OpenAPI_nssai_mapping_t;
+};
 
 OpenAPI_nssai_mapping_t *OpenAPI_nssai_mapping_create(
     OpenAPI_snssai_t *mapped_snssai,

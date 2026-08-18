@@ -8,25 +8,27 @@
 #define _OpenAPI_routing_info_sm_request_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_routing_info_sm_request_s OpenAPI_routing_info_sm_request_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_routing_info_sm_request_s OpenAPI_routing_info_sm_request_t;
-typedef struct OpenAPI_routing_info_sm_request_s {
+struct OpenAPI_routing_info_sm_request_s {
     bool is_ip_sm_gw_ind;
     int ip_sm_gw_ind;
+    char *correlation_id;
     char *supported_features;
-} OpenAPI_routing_info_sm_request_t;
+};
 
 OpenAPI_routing_info_sm_request_t *OpenAPI_routing_info_sm_request_create(
     bool is_ip_sm_gw_ind,
     int ip_sm_gw_ind,
+    char *correlation_id,
     char *supported_features
 );
 void OpenAPI_routing_info_sm_request_free(OpenAPI_routing_info_sm_request_t *routing_info_sm_request);

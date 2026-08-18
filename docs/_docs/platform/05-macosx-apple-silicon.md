@@ -25,6 +25,12 @@ $ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/
 ### Getting MongoDB
 ---
 
+**Tip:** MongoDB is used as the database for PCF/UDR and PCRF/HSS.
+{: .notice--info}
+
+**Note:** If you use an external MongoDB server, you can skip this section.
+{: .notice--warning}
+
 Install MongoDB with Package Manager.
 ```bash
 $ brew tap mongodb/brew
@@ -100,7 +106,7 @@ $ sudo pfctl -e -f /etc/pf.anchors/org.open5gs
 
 Install the depedencies for building the source code.
 ```bash
-$ brew install mongo-c-driver gnutls libgcrypt libidn libyaml libmicrohttpd nghttp2 pkg-config bison libusrsctp libtins talloc cmake
+$ brew install mongo-c-driver gnutls libgcrypt libidn c-ares libyaml libmicrohttpd nghttp2 pkg-config bison libusrsctp libtins talloc cmake
 ```
 
 Configure Homebrew PATH

@@ -1,14 +1,14 @@
 /*
  * code_word_ind.h
  *
- * 
+ * Indicates that the codeword shall be checked in UE or one or more codeword values to be checked in GMLC. 
  */
 
 #ifndef _OpenAPI_code_word_ind_H_
 #define _OpenAPI_code_word_ind_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

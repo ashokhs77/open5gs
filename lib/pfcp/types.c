@@ -73,154 +73,6 @@ const char *ogs_pfcp_cause_get_name(uint8_t cause)
     return "OGS_PFCP_CAUSE_UNKNOWN";
 }
 
-int16_t ogs_pfcp_build_user_plane_ip_resource_info(
-        ogs_tlv_octet_t *octet,
-        ogs_user_plane_ip_resource_info_t *info,
-        void *data, int data_len)
-{
-    ogs_user_plane_ip_resource_info_t target;
-    int16_t size = 0;
-
-    ogs_assert(info);
-    ogs_assert(octet);
-    ogs_assert(data);
-    ogs_assert(data_len);
-
-    octet->data = data;
-    memcpy(&target, info, sizeof(ogs_user_plane_ip_resource_info_t));
-
-    ogs_assert(size + sizeof(target.flags) <= data_len);
-    memcpy((unsigned char *)octet->data + size,
-            &target.flags, sizeof(target.flags));
-    size += sizeof(target.flags);
-
-    if (target.teidri) {
-        ogs_assert(size + sizeof(target.teid_range) <= data_len);
-        memcpy((unsigned char *)octet->data + size,
-                &target.teid_range, sizeof(target.teid_range));
-        size += sizeof(target.teid_range);
-    }
-
-    if (target.v4) {
-        ogs_assert(size + sizeof(target.addr) <= data_len);
-        memcpy((unsigned char *)octet->data + size,
-                &target.addr, sizeof(target.addr));
-        size += sizeof(target.addr);
-    }
-
-    if (target.v6) {
-        ogs_assert(size + OGS_IPV6_LEN <= data_len);
-        memcpy((unsigned char *)octet->data + size,
-                &target.addr6, OGS_IPV6_LEN);
-        size += OGS_IPV6_LEN;
-    }
-
-    if (target.assoni) {
-        int len = ogs_fqdn_build((char *)octet->data + size,
-                target.network_instance, strlen(target.network_instance));
-        size += len;
-    }
-
-    if (target.assosi) {
-        ogs_assert(size + sizeof(target.source_interface) <= data_len);
-        memcpy((unsigned char *)octet->data + size,
-                &target.source_interface, sizeof(target.source_interface));
-        size += sizeof(target.source_interface);
-    }
-
-    octet->len = size;
-
-    return octet->len;
-}
-
-int16_t ogs_pfcp_parse_user_plane_ip_resource_info(
-        ogs_user_plane_ip_resource_info_t *info,
-        ogs_tlv_octet_t *octet)
-{
-    int16_t size = 0;
-
-    ogs_assert(info);
-    ogs_assert(octet);
-
-    memset(info, 0, sizeof(ogs_user_plane_ip_resource_info_t));
-
-    memcpy(&info->flags,
-            (unsigned char *)octet->data + size, sizeof(info->flags));
-    size++;
-
-    if (info->teidri) {
-        if (size + sizeof(info->teid_range) > octet->len) {
-            ogs_error("size[%d]+sizeof(info->teid_range)[%d] > IE Length[%d]",
-                    size, (int)sizeof(info->teid_range), octet->len);
-            return 0;
-        }
-        memcpy(&info->teid_range, (unsigned char *)octet->data + size,
-                sizeof(info->teid_range));
-        size += sizeof(info->teid_range);
-    }
-
-    if (info->v4) {
-        if (size + sizeof(info->addr) > octet->len) {
-            ogs_error("size[%d]+sizeof(info->addr)[%d] > IE Length[%d]",
-                    size, (int)sizeof(info->addr), octet->len);
-            return 0;
-        }
-        memcpy(&info->addr,
-                (unsigned char *)octet->data + size,
-                sizeof(info->addr));
-        size += sizeof(info->addr);
-    }
-
-    if (info->v6) {
-        if (size + OGS_IPV6_LEN > octet->len) {
-            ogs_error("size[%d]+OGS_IPV6_LEN[%d] > IE Length[%d]",
-                    size, (int)OGS_IPV6_LEN, octet->len);
-            return 0;
-        }
-        memcpy(&info->addr6, (unsigned char *)octet->data + size, OGS_IPV6_LEN);
-        size += OGS_IPV6_LEN;
-    }
-
-    if (info->assoni) {
-        int len = octet->len - size;
-        if (len <= 0) {
-            ogs_error("len[%d] octect->len[%d] size[%d]", len, octet->len, size);
-            return 0;
-        }
-
-        if (info->assosi) len--;
-        if (len <= 0) {
-            ogs_error("info->assosi[%d] len[%d] octect->len[%d] size[%d]",
-                    info->assosi, len, octet->len, size);
-            return 0;
-        }
-
-        if (ogs_fqdn_parse(info->network_instance, (char *)octet->data + size,
-            ogs_min(len, OGS_MAX_APN_LEN)) <= 0) {
-            ogs_error("Invalid info->network_instance");
-            info->network_instance[0] = 0;
-        }
-        size += len;
-    }
-
-    if (info->assosi) {
-        if (size + sizeof(info->source_interface) > octet->len) {
-            ogs_error("size[%d]+sizeof(info->source_interface)[%d] > "
-                    "IE Length[%d]",
-                    size, (int)sizeof(info->source_interface), octet->len);
-            return 0;
-        }
-        memcpy(&info->source_interface, (unsigned char *)octet->data + size,
-                sizeof(info->source_interface));
-        size += sizeof(info->source_interface);
-    }
-
-    if (size != octet->len)
-        ogs_error("Mismatch IE Length[%d] != Decoded[%d]", octet->len, size);
-
-    return size;
-}
-
 int16_t ogs_pfcp_build_sdf_filter(
         ogs_tlv_octet_t *octet, ogs_pfcp_sdf_filter_t *filter,
         void *data, int data_len)
@@ -343,6 +195,12 @@ int16_t ogs_pfcp_parse_sdf_filter(
         filter->flow_description_len = be16toh(filter->flow_description_len);
         size += sizeof(filter->flow_description_len);
 
+        if (size + filter->flow_description_len > octet->len) {
+            ogs_error("size[%d]+filter->flow_description_len[%d] "
+                    "> IE Length[%d]",
+                    size, filter->flow_description_len, octet->len);
+            return 0;
+        }
         filter->flow_description = (char *)octet->data + size;
         size += filter->flow_description_len;
     }
@@ -542,6 +400,11 @@ int16_t ogs_pfcp_parse_volume(
 
     memset(volume, 0, sizeof(ogs_pfcp_volume_threshold_t));
 
+    if (size + sizeof(volume->flags) > octet->len) {
+        ogs_error("size[%d]+sizeof(volume->flags)[%d] > IE Length[%d]",
+                size, (int)sizeof(volume->flags), octet->len);
+        return 0;
+    }
     volume->flags = ((unsigned char *)octet->data)[size];
     size += sizeof(volume->flags);
 
@@ -640,10 +503,22 @@ int16_t ogs_pfcp_parse_dropped_dl_traffic_threshold(
 
     memset(threshold, 0, sizeof(ogs_pfcp_dropped_dl_traffic_threshold_t));
 
+    if (size + sizeof(threshold->flags) > octet->len) {
+        ogs_error("size[%d]+sizeof(threshold->flags)[%d] > IE Length[%d]",
+                size, (int)sizeof(threshold->flags), octet->len);
+        return 0;
+    }
     threshold->flags = ((unsigned char *)octet->data)[size];
     size += sizeof(threshold->flags);
 
     if (threshold->dlpa) {
+        if (size + sizeof(threshold->downlink_packets) > octet->len) {
+            ogs_error("size[%d]+sizeof(threshold->downlink_packets)[%d] "
+                    "> IE Length[%d]",
+                    size, (int)sizeof(threshold->downlink_packets),
+                    octet->len);
+            return 0;
+        }
         memcpy(&threshold->downlink_packets,
                 (unsigned char *)octet->data + size,
                 sizeof(threshold->downlink_packets));
@@ -651,6 +526,16 @@ int16_t ogs_pfcp_parse_dropped_dl_traffic_threshold(
         size += sizeof(threshold->downlink_packets);
     }
     if (threshold->dlby) {
+        if (size + sizeof(threshold->number_of_bytes_of_downlink_data) >
+                octet->len) {
+            ogs_error("size[%d]+"
+                    "sizeof(threshold->number_of_bytes_of_downlink_data)[%d] "
+                    "> IE Length[%d]",
+                    size,
+                    (int)sizeof(threshold->number_of_bytes_of_downlink_data),
+                    octet->len);
+            return 0;
+        }
         memcpy(&threshold->number_of_bytes_of_downlink_data,
                 (unsigned char *)octet->data + size,
                 sizeof(threshold->number_of_bytes_of_downlink_data));
@@ -736,40 +621,81 @@ int16_t ogs_pfcp_parse_volume_measurement(
 
     memset(volume, 0, sizeof(ogs_pfcp_volume_measurement_t));
 
+    if (size + sizeof(volume->flags) > octet->len) {
+        ogs_error("size[%d]+sizeof(volume->flags)[%d] > IE Length[%d]",
+                size, (int)sizeof(volume->flags), octet->len);
+        return 0;
+    }
     volume->flags = ((unsigned char *)octet->data)[size];
     size += sizeof(volume->flags);
 
     if (volume->tovol) {
+        if (size + sizeof(volume->total_volume) > octet->len) {
+            ogs_error("size[%d]+sizeof(volume->total_volume)[%d] "
+                    "> IE Length[%d]",
+                    size, (int)sizeof(volume->total_volume), octet->len);
+            return 0;
+        }
         memcpy(&volume->total_volume, (unsigned char *)octet->data + size,
                 sizeof(volume->total_volume));
         volume->total_volume = be64toh(volume->total_volume);
         size += sizeof(volume->total_volume);
     }
     if (volume->ulvol) {
+        if (size + sizeof(volume->uplink_volume) > octet->len) {
+            ogs_error("size[%d]+sizeof(volume->uplink_volume)[%d] "
+                    "> IE Length[%d]",
+                    size, (int)sizeof(volume->uplink_volume), octet->len);
+            return 0;
+        }
         memcpy(&volume->uplink_volume, (unsigned char *)octet->data + size,
                 sizeof(volume->uplink_volume));
         volume->uplink_volume = be64toh(volume->uplink_volume);
         size += sizeof(volume->uplink_volume);
     }
     if (volume->dlvol) {
+        if (size + sizeof(volume->downlink_volume) > octet->len) {
+            ogs_error("size[%d]+sizeof(volume->downlink_volume)[%d] "
+                    "> IE Length[%d]",
+                    size, (int)sizeof(volume->downlink_volume), octet->len);
+            return 0;
+        }
         memcpy(&volume->downlink_volume, (unsigned char *)octet->data + size,
                 sizeof(volume->downlink_volume));
         volume->downlink_volume = be64toh(volume->downlink_volume);
         size += sizeof(volume->downlink_volume);
     }
     if (volume->tonop) {
+        if (size + sizeof(volume->total_n_packets) > octet->len) {
+            ogs_error("size[%d]+sizeof(volume->total_n_packets)[%d] "
+                    "> IE Length[%d]",
+                    size, (int)sizeof(volume->total_n_packets), octet->len);
+            return 0;
+        }
         memcpy(&volume->total_n_packets, (unsigned char *)octet->data + size,
                 sizeof(volume->total_n_packets));
         volume->total_n_packets = be64toh(volume->total_n_packets);
         size += sizeof(volume->total_n_packets);
     }
     if (volume->ulnop) {
+        if (size + sizeof(volume->uplink_n_packets) > octet->len) {
+            ogs_error("size[%d]+sizeof(volume->uplink_n_packets)[%d] "
+                    "> IE Length[%d]",
+                    size, (int)sizeof(volume->uplink_n_packets), octet->len);
+            return 0;
+        }
         memcpy(&volume->uplink_n_packets, (unsigned char *)octet->data + size,
                 sizeof(volume->uplink_n_packets));
         volume->uplink_n_packets = be64toh(volume->uplink_n_packets);
         size += sizeof(volume->uplink_n_packets);
     }
     if (volume->dlnop) {
+        if (size + sizeof(volume->downlink_n_packets) > octet->len) {
+            ogs_error("size[%d]+sizeof(volume->downlink_n_packets)[%d] "
+                    "> IE Length[%d]",
+                    size, (int)sizeof(volume->downlink_n_packets), octet->len);
+            return 0;
+        }
         memcpy(&volume->downlink_n_packets, (unsigned char *)octet->data + size,
                 sizeof(volume->downlink_n_packets));
         volume->downlink_n_packets = be64toh(volume->downlink_n_packets);

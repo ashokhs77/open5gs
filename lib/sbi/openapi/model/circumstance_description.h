@@ -8,25 +8,25 @@
 #define _OpenAPI_circumstance_description_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_circumstance_description_s OpenAPI_circumstance_description_t;
 #include "network_area_info.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_circumstance_description_s OpenAPI_circumstance_description_t;
-typedef struct OpenAPI_circumstance_description_s {
+struct OpenAPI_circumstance_description_s {
     bool is_freq;
     float freq;
     char *tm;
     struct OpenAPI_network_area_info_s *loc_area;
     bool is_vol;
     long vol;
-} OpenAPI_circumstance_description_t;
+};
 
 OpenAPI_circumstance_description_t *OpenAPI_circumstance_description_create(
     bool is_freq,

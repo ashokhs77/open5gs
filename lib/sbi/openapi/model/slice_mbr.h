@@ -8,20 +8,20 @@
 #define _OpenAPI_slice_mbr_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_slice_mbr_s OpenAPI_slice_mbr_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_slice_mbr_s OpenAPI_slice_mbr_t;
-typedef struct OpenAPI_slice_mbr_s {
+struct OpenAPI_slice_mbr_s {
     char *uplink;
     char *downlink;
-} OpenAPI_slice_mbr_t;
+};
 
 OpenAPI_slice_mbr_t *OpenAPI_slice_mbr_create(
     char *uplink,

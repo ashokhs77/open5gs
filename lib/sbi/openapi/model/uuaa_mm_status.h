@@ -1,14 +1,14 @@
 /*
  * uuaa_mm_status.h
  *
- * 
+ * Indicates the UUAA-MM status
  */
 
 #ifndef _OpenAPI_uuaa_mm_status_H_
 #define _OpenAPI_uuaa_mm_status_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

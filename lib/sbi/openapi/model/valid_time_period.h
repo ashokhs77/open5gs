@@ -1,27 +1,27 @@
 /*
  * valid_time_period.h
  *
- * 
+ * Contains the validity time period
  */
 
 #ifndef _OpenAPI_valid_time_period_H_
 #define _OpenAPI_valid_time_period_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_valid_time_period_s OpenAPI_valid_time_period_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_valid_time_period_s OpenAPI_valid_time_period_t;
-typedef struct OpenAPI_valid_time_period_s {
+struct OpenAPI_valid_time_period_s {
     char *start_time;
     char *end_time;
-} OpenAPI_valid_time_period_t;
+};
 
 OpenAPI_valid_time_period_t *OpenAPI_valid_time_period_create(
     char *start_time,

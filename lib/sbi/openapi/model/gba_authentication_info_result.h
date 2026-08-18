@@ -8,21 +8,21 @@
 #define _OpenAPI_gba_authentication_info_result_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_gba_authentication_info_result_s OpenAPI_gba_authentication_info_result_t;
 #include "model_3_g_aka_av.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_gba_authentication_info_result_s OpenAPI_gba_authentication_info_result_t;
-typedef struct OpenAPI_gba_authentication_info_result_s {
+struct OpenAPI_gba_authentication_info_result_s {
     struct OpenAPI_model_3_g_aka_av_s *_3g_aka_av;
     char *supported_features;
-} OpenAPI_gba_authentication_info_result_t;
+};
 
 OpenAPI_gba_authentication_info_result_t *OpenAPI_gba_authentication_info_result_create(
     OpenAPI_model_3_g_aka_av_t *_3g_aka_av,

@@ -8,21 +8,21 @@
 #define _OpenAPI_nf_service_instance_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_nf_service_instance_s OpenAPI_nf_service_instance_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_nf_service_instance_s OpenAPI_nf_service_instance_t;
-typedef struct OpenAPI_nf_service_instance_s {
+struct OpenAPI_nf_service_instance_s {
     char *service_instance_id;
     char *nf_instance_id;
     char *nf_service_set_id;
-} OpenAPI_nf_service_instance_t;
+};
 
 OpenAPI_nf_service_instance_t *OpenAPI_nf_service_instance_create(
     char *service_instance_id,

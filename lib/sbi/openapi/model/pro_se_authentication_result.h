@@ -8,22 +8,22 @@
 #define _OpenAPI_pro_se_authentication_result_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_pro_se_authentication_result_s OpenAPI_pro_se_authentication_result_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_pro_se_authentication_result_s OpenAPI_pro_se_authentication_result_t;
-typedef struct OpenAPI_pro_se_authentication_result_s {
+struct OpenAPI_pro_se_authentication_result_s {
     char *knr_pro_se;
     bool is_nonce2_null;
     char *nonce2;
     char *supported_features;
-} OpenAPI_pro_se_authentication_result_t;
+};
 
 OpenAPI_pro_se_authentication_result_t *OpenAPI_pro_se_authentication_result_create(
     char *knr_pro_se,

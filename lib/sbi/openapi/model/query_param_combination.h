@@ -8,20 +8,20 @@
 #define _OpenAPI_query_param_combination_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_query_param_combination_s OpenAPI_query_param_combination_t;
 #include "query_parameter.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_query_param_combination_s OpenAPI_query_param_combination_t;
-typedef struct OpenAPI_query_param_combination_s {
+struct OpenAPI_query_param_combination_s {
     OpenAPI_list_t *query_params;
-} OpenAPI_query_param_combination_t;
+};
 
 OpenAPI_query_param_combination_t *OpenAPI_query_param_combination_create(
     OpenAPI_list_t *query_params

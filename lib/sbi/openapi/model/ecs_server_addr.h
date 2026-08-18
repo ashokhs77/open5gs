@@ -8,23 +8,23 @@
 #define _OpenAPI_ecs_server_addr_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_ecs_server_addr_s OpenAPI_ecs_server_addr_t;
 #include "ip_addr.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_ecs_server_addr_s OpenAPI_ecs_server_addr_t;
-typedef struct OpenAPI_ecs_server_addr_s {
+struct OpenAPI_ecs_server_addr_s {
     OpenAPI_list_t *ecs_fqdn_list;
     OpenAPI_list_t *ecs_ip_address_list;
     OpenAPI_list_t *ecs_uri_list;
     char *ecs_provider_id;
-} OpenAPI_ecs_server_addr_t;
+};
 
 OpenAPI_ecs_server_addr_t *OpenAPI_ecs_server_addr_create(
     OpenAPI_list_t *ecs_fqdn_list,

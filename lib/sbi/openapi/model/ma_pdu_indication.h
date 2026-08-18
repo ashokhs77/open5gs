@@ -1,14 +1,14 @@
 /*
  * ma_pdu_indication.h
  *
- * 
+ * Contains the MA PDU session indication, i.e., MA PDU Request or MA PDU Network-Upgrade Allowed. 
  */
 
 #ifndef _OpenAPI_ma_pdu_indication_H_
 #define _OpenAPI_ma_pdu_indication_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

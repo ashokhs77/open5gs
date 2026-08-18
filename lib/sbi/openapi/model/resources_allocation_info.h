@@ -8,10 +8,11 @@
 #define _OpenAPI_resources_allocation_info_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_resources_allocation_info_s OpenAPI_resources_allocation_info_t;
 #include "flows.h"
 #include "media_component_resources_status.h"
 
@@ -19,12 +20,11 @@
 extern "C" {
 #endif
 
-typedef struct OpenAPI_resources_allocation_info_s OpenAPI_resources_allocation_info_t;
-typedef struct OpenAPI_resources_allocation_info_s {
+struct OpenAPI_resources_allocation_info_s {
     OpenAPI_media_component_resources_status_e mc_resourc_status;
     OpenAPI_list_t *flows;
     char *alt_ser_req;
-} OpenAPI_resources_allocation_info_t;
+};
 
 OpenAPI_resources_allocation_info_t *OpenAPI_resources_allocation_info_create(
     OpenAPI_media_component_resources_status_e mc_resourc_status,

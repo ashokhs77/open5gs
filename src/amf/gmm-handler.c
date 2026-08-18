@@ -131,12 +131,6 @@ ogs_nas_5gmm_cause_t gmm_handle_registration_request(amf_ue_t *amf_ue,
         return OGS_5GMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE;
     }
 
-    if (mobile_identity->length < OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE) {
-        ogs_error("The length of Mobile Identity(%d) is less then the min(%d)",
-            mobile_identity->length, OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE);
-        return OGS_5GMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE;
-    }
-
     mobile_identity_header =
             (ogs_nas_5gs_mobile_identity_header_t *)mobile_identity->buffer;
 
@@ -144,8 +138,17 @@ ogs_nas_5gmm_cause_t gmm_handle_registration_request(amf_ue_t *amf_ue,
 
     switch (mobile_identity_header->type) {
     case OGS_NAS_5GS_MOBILE_IDENTITY_SUCI:
+        if (mobile_identity->length <
+                (OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE + 1)) {
+            ogs_error("Too short SUCI Mobile Identity [%d:%d]",
+                    mobile_identity->length,
+                    OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE + 1);
+            return OGS_5GMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE;
+        }
+
         mobile_identity_suci =
             (ogs_nas_5gs_mobile_identity_suci_t *)mobile_identity->buffer;
+        ogs_assert(mobile_identity_suci);
         if (mobile_identity_suci->h.supi_format !=
                 OGS_NAS_5GS_SUPI_FORMAT_IMSI) {
             ogs_error("Not implemented SUPI format [%d]",
@@ -183,12 +186,17 @@ ogs_nas_5gmm_cause_t gmm_handle_registration_request(amf_ue_t *amf_ue,
         ogs_info("[%s]    SUCI", amf_ue->suci);
         break;
     case OGS_NAS_5GS_MOBILE_IDENTITY_GUTI:
-        mobile_identity_guti =
-            (ogs_nas_5gs_mobile_identity_guti_t *)mobile_identity->buffer;
-        if (!mobile_identity_guti) {
-            ogs_error("No mobile identity");
+        if (mobile_identity->length <
+                sizeof(ogs_nas_5gs_mobile_identity_guti_t)) {
+            ogs_error("Too short 5G-GUTI Mobile Identity [%d:%d]",
+                    mobile_identity->length,
+                    (int)sizeof(ogs_nas_5gs_mobile_identity_guti_t));
             return OGS_5GMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE;
         }
+
+        mobile_identity_guti =
+            (ogs_nas_5gs_mobile_identity_guti_t *)mobile_identity->buffer;
+        ogs_assert(mobile_identity_guti);
 
         ogs_nas_5gs_mobile_identity_guti_to_nas_guti(
             mobile_identity_guti, &amf_ue->old_guti);
@@ -927,14 +935,14 @@ int gmm_handle_deregistration_request(amf_ue_t *amf_ue,
         amf_sess_xact_count(amf_ue) == xact_count) {
         if (UDM_SDM_SUBSCRIBED(amf_ue)) {
             r = amf_ue_sbi_discover_and_send(
-                    OGS_SBI_SERVICE_TYPE_NUDM_SDM, NULL,
+                    OpenAPI_service_name_nudm_sdm, NULL,
                     amf_nudm_sdm_build_subscription_delete,
                     amf_ue, state, NULL);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
         } else if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
             r = amf_ue_sbi_discover_and_send(
-                    OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
+                    OpenAPI_service_name_npcf_am_policy_control,
                     NULL,
                     amf_npcf_am_policy_control_build_delete,
                     amf_ue, state, NULL);
@@ -992,7 +1000,7 @@ int gmm_handle_authentication_response(amf_ue_t *amf_ue,
             authentication_response_parameter->length);
 
     r = amf_ue_sbi_discover_and_send(
-            OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
+            OpenAPI_service_name_nausf_auth, NULL,
             amf_nausf_auth_build_authenticate_confirmation, amf_ue, 0, NULL);
     ogs_expect(r == OGS_OK);
     ogs_assert(r != OGS_ERROR);
@@ -1024,18 +1032,21 @@ ogs_nas_5gmm_cause_t gmm_handle_identity_response(amf_ue_t *amf_ue,
         return OGS_5GMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE;
     }
 
-    if (mobile_identity->length < OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE) {
-        ogs_error("The length of Mobile Identity(%d) is less then the min(%d)",
-            mobile_identity->length, OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE);
-        return OGS_5GMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE;
-    }
-
     mobile_identity_header =
             (ogs_nas_5gs_mobile_identity_header_t *)mobile_identity->buffer;
 
     if (mobile_identity_header->type == OGS_NAS_5GS_MOBILE_IDENTITY_SUCI) {
+        if (mobile_identity->length <
+                (OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE + 1)) {
+            ogs_error("Too short SUCI Mobile Identity [%d:%d]",
+                    mobile_identity->length,
+                    OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE + 1);
+            return OGS_5GMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE;
+        }
+
         mobile_identity_suci =
             (ogs_nas_5gs_mobile_identity_suci_t *)mobile_identity->buffer;
+        ogs_assert(mobile_identity_suci);
         if (mobile_identity_suci->h.supi_format !=
                 OGS_NAS_5GS_SUPI_FORMAT_IMSI) {
             ogs_error("Not implemented SUPI format [%d]",
@@ -1169,6 +1180,7 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
     int r;
     ogs_slice_data_t *selected_slice = NULL;
     amf_sess_t *sess = NULL;
+    bool new_session = false;
 
     ogs_nas_payload_container_type_t *payload_container_type = NULL;
     ogs_nas_payload_container_t *payload_container = NULL;
@@ -1248,6 +1260,7 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
             if (!sess) {
                 sess = amf_sess_add(amf_ue, *pdu_session_id);
                 ogs_assert(sess);
+                new_session = true;
             } else {
             /*
              * These are variables that should be initialized
@@ -1409,6 +1422,16 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                         OGS_5GMM_CAUSE_DNN_NOT_SUPPORTED_OR_NOT_SUBSCRIBED_IN_THE_SLICE);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
+
+                /*
+                 * If this function created the session context,
+                 * it should be removed before returning. Otherwise,
+                 * the session context remains in amf_ue->sess_list
+                 * until the UE context is released.
+                 */
+                if (new_session)
+                    amf_sess_remove(sess);
+
                 return OGS_ERROR;
             }
 
@@ -1431,12 +1454,12 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
 
                 amf_nnssf_nsselection_param_t param;
 
-                ogs_sbi_service_type_e service_type = OGS_SBI_SERVICE_TYPE_NULL;
+                OpenAPI_service_name_e service_name = OpenAPI_service_name_NULL;
                 OpenAPI_nf_type_e target_nf_type = OpenAPI_nf_type_NULL;
                 OpenAPI_nf_type_e requester_nf_type = OpenAPI_nf_type_NULL;
 
-                service_type = OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION;
-                target_nf_type = ogs_sbi_service_type_to_nf_type(service_type);
+                service_name = OpenAPI_service_name_nsmf_pdusession;
+                target_nf_type = ogs_sbi_service_name_to_nf_type(service_name);
                 ogs_assert(target_nf_type);
                 requester_nf_type = NF_INSTANCE_TYPE(
                         ogs_sbi_self()->nf_instance);
@@ -1485,7 +1508,7 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                  * Check Visited SMF Instance
                  *******************************************/
                 v_smf_instance = OGS_SBI_GET_NF_INSTANCE(
-                        sess->sbi.service_type_array[service_type]);
+                        sess->sbi.service_name_array[service_name]);
                 if (!v_smf_instance) {
                     v_smf_instance =
                         ogs_sbi_nf_instance_find_by_discovery_param(
@@ -1496,7 +1519,7 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                         ogs_info("V-SMF Instance [%s](LIST)",
                                 v_smf_instance->id);
                         OGS_SBI_SETUP_NF_INSTANCE(
-                                sess->sbi.service_type_array[service_type],
+                                sess->sbi.service_name_array[service_name],
                                 v_smf_instance);
                     } else
                         ogs_info("No V-SMF Instance");
@@ -1602,7 +1625,7 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                             v_smf_instance,
                             h_smf_instance);
                     r = amf_sess_sbi_discover_and_send(
-                            OGS_SBI_SERVICE_TYPE_NNSSF_NSSELECTION, NULL,
+                            OpenAPI_service_name_nnssf_nsselection, NULL,
                             amf_nnssf_nsselection_build_get,
                             ran_ue, sess, state, &param);
                     ogs_expect(r == OGS_OK);
@@ -1619,7 +1642,7 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                             v_smf_instance,
                             h_smf_instance);
                     r = amf_sess_sbi_discover_and_send(
-                            OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION,
+                            OpenAPI_service_name_nsmf_pdusession,
                             v_discovery_option,
                             amf_nsmf_pdusession_build_create_sm_context,
                             ran_ue, sess, state, NULL);
@@ -1639,7 +1662,7 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                 param.cause = OpenAPI_cause_REL_DUE_TO_DUPLICATE_SESSION_ID;
 
                 r = amf_sess_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+                        OpenAPI_service_name_nsmf_pdusession, NULL,
                         amf_nsmf_pdusession_build_update_sm_context,
                         ran_ue, sess,
                         AMF_UPDATE_SM_CONTEXT_DUPLICATED_PDU_SESSION_ID,
@@ -1670,7 +1693,7 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                 param.ue_timezone = true;
 
                 r = amf_sess_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+                        OpenAPI_service_name_nsmf_pdusession, NULL,
                         amf_nsmf_pdusession_build_update_sm_context,
                         ran_ue, sess,
                         AMF_UPDATE_SM_CONTEXT_N1_RELEASED, &param);
@@ -1683,7 +1706,7 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                 param.n1smbuf = sess->payload_container;
 
                 r = amf_sess_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+                        OpenAPI_service_name_nsmf_pdusession, NULL,
                         amf_nsmf_pdusession_build_update_sm_context,
                         ran_ue, sess, AMF_UPDATE_SM_CONTEXT_MODIFIED, &param);
                 ogs_expect(r == OGS_OK);
@@ -1755,6 +1778,7 @@ static ogs_nas_5gmm_cause_t gmm_handle_nas_message_container(
         ogs_nas_message_container_t *nas_message_container)
 {
     int gmm_cause;
+    uint8_t expected_message_type = 0;
 
     ogs_pkbuf_t *nasbuf = NULL;
     ogs_nas_5gs_message_t nas_message;
@@ -1809,6 +1833,55 @@ static ogs_nas_5gmm_cause_t gmm_handle_nas_message_container(
         ogs_error("ogs_nas_5gmm_decode() failed");
         ogs_pkbuf_free(nasbuf);
         return OGS_5GMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE;
+    }
+
+    /*
+     * 3GPP TS 24.501 4.4.6 / TS 33.501 6.4.6
+     *
+     * Only an initial NAS message (REGISTRATION REQUEST or SERVICE REQUEST)
+     * may be carried in the NAS message container IE. Reject any other
+     * inner message type with SEMANTICALLY_INCORRECT_MESSAGE rather than
+     * dispatching it.
+     */
+    switch (nas_message.gmm.h.message_type) {
+    case OGS_NAS_5GS_REGISTRATION_REQUEST:
+    case OGS_NAS_5GS_SERVICE_REQUEST:
+        break;
+    default:
+        ogs_error("[%s] Unexpected NAS message type [%d] in "
+                "NAS message container [outer:%d]",
+                amf_ue->supi,
+                nas_message.gmm.h.message_type, message_type);
+        ogs_pkbuf_free(nasbuf);
+        return OGS_5GMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE;
+    }
+
+    /*
+     * The protected NAS message must match the procedure being resumed.
+     * In SecurityModeComplete, the procedure is the previously stored
+     * initial NAS message. Otherwise, it is the current outer message.
+     *
+     * Without this check, a SECURITY MODE COMPLETE container can carry an
+     * initial NAS message of a different type than the one that triggered
+     * the security mode control procedure. The AMF would then resume on
+     * the other path, bypassing per-procedure preconditions (e.g.
+     * allowed_nssai is populated only on the registration path) and reach
+     * ngap_ue_build_initial_context_setup_request() with an empty
+     * allowed_nssai, hitting ogs_assert(amf_ue->allowed_nssai.num_of_s_nssai)
+     * and aborting open5gs-amfd (issue #4422).
+     */
+    expected_message_type =
+        (message_type == OGS_NAS_5GS_SECURITY_MODE_COMPLETE) ?
+            amf_ue->nas.message_type : message_type;
+    if (nas_message.gmm.h.message_type != expected_message_type) {
+        ogs_error("[%s] NAS message type mismatch in NAS message container "
+                "[expected:%d, received:%d, outer:%d]",
+                amf_ue->supi,
+                expected_message_type,
+                nas_message.gmm.h.message_type,
+                message_type);
+        ogs_pkbuf_free(nasbuf);
+        return OGS_5GMM_CAUSE_MESSAGE_NOT_COMPATIBLE_WITH_THE_PROTOCOL_STATE;
     }
 
     gmm_cause = OGS_5GMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE;

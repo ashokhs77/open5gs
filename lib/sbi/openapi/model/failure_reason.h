@@ -1,14 +1,14 @@
 /*
  * failure_reason.h
  *
- * 
+ * Reason for failure to reconstruct a HTTP/2 message from N32-f message
  */
 
 #ifndef _OpenAPI_failure_reason_H_
 #define _OpenAPI_failure_reason_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

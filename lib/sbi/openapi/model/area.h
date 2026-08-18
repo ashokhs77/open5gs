@@ -8,20 +8,20 @@
 #define _OpenAPI_area_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_area_s OpenAPI_area_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_area_s OpenAPI_area_t;
-typedef struct OpenAPI_area_s {
+struct OpenAPI_area_s {
     OpenAPI_list_t *tacs;
     char *area_code;
-} OpenAPI_area_t;
+};
 
 OpenAPI_area_t *OpenAPI_area_create(
     OpenAPI_list_t *tacs,

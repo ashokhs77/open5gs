@@ -8,21 +8,21 @@
 #define _OpenAPI_n32f_error_detail_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_n32f_error_detail_s OpenAPI_n32f_error_detail_t;
 #include "failure_reason.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_n32f_error_detail_s OpenAPI_n32f_error_detail_t;
-typedef struct OpenAPI_n32f_error_detail_s {
+struct OpenAPI_n32f_error_detail_s {
     char *attribute;
     OpenAPI_failure_reason_e msg_reconstruct_fail_reason;
-} OpenAPI_n32f_error_detail_t;
+};
 
 OpenAPI_n32f_error_detail_t *OpenAPI_n32f_error_detail_create(
     char *attribute,

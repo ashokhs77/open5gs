@@ -64,24 +64,22 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
     amf_ue_t *amf_ue = NULL;
     amf_sess_t *sess = NULL;
 
-    ogs_sbi_object_t *sbi_object = NULL;
     ogs_pool_id_t sbi_object_id = OGS_INVALID_POOL_ID;
     ogs_sbi_xact_t *sbi_xact = NULL;
     ogs_pool_id_t sbi_xact_id = OGS_INVALID_POOL_ID;
     int state = AMF_CREATE_SM_CONTEXT_NO_STATE;
     ogs_pool_id_t ran_ue_id = OGS_INVALID_POOL_ID;
+    ogs_pool_id_t target_ue_id = OGS_INVALID_POOL_ID;
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_request_t *sbi_request = NULL;
-    ogs_sbi_service_type_e service_type = OGS_SBI_SERVICE_TYPE_NULL;
 
     ogs_sbi_nf_instance_t *nf_instance = NULL;
     ogs_sbi_subscription_data_t *subscription_data = NULL;
     ogs_sbi_response_t *sbi_response = NULL;
     ogs_sbi_message_t sbi_message;
 
-    OpenAPI_nf_type_e requester_nf_type = OpenAPI_nf_type_NULL;
-    ogs_sbi_discovery_option_t *discovery_option = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     amf_sm_debug(e);
 
@@ -141,13 +139,15 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message.h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message.h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nudm_sdm:
             api_version = OGS_SBI_API_V2;
             break;
-        DEFAULT
+        default:
             api_version = OGS_SBI_API_V1;
-        END
+        }
 
         ogs_assert(api_version);
         if (strcmp(sbi_message.h.api.version, api_version) != 0) {
@@ -160,8 +160,8 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message.h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NNRF_NFM)
+        switch (service_name_id) {
+        case OpenAPI_service_name_nnrf_nfm:
 
             SWITCH(sbi_message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_NF_STATUS_NOTIFY)
@@ -190,7 +190,7 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 SWITCH(sbi_message.h.resource.component[2])
@@ -275,7 +275,7 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_CALLBACK)
+        case OGS_SBI_SERVICE_NAME_ID_NAMF_CALLBACK:
             SWITCH(sbi_message.h.resource.component[1])
             CASE(OGS_SBI_RESOURCE_NAME_SM_CONTEXT_STATUS)
                 amf_namf_callback_handle_sm_context_status(
@@ -306,14 +306,14 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", sbi_message.h.service.name);
             ogs_assert(true ==
                 ogs_sbi_server_send_error(stream,
                     OGS_SBI_HTTP_STATUS_BAD_REQUEST, &sbi_message,
                     "Invalid API name", sbi_message.h.resource.component[0],
                     NULL));
-        END
+        }
 
         /* In lib/sbi/server.c, notify_completed() releases 'request' buffer. */
         ogs_sbi_message_free(&sbi_message);
@@ -332,14 +332,16 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message.h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
-        CASE(OGS_SBI_SERVICE_NAME_NNSSF_NSSELECTION)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message.h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nudm_sdm:
+        case OpenAPI_service_name_nnssf_nsselection:
             api_version = OGS_SBI_API_V2;
             break;
-        DEFAULT
+        default:
             api_version = OGS_SBI_API_V1;
-        END
+        }
 
         ogs_assert(api_version);
         if (strcmp(sbi_message.h.api.version, api_version) != 0) {
@@ -349,8 +351,8 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message.h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NNRF_NFM)
+        switch (service_name_id) {
+        case OpenAPI_service_name_nnrf_nfm:
 
             SWITCH(sbi_message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_NF_INSTANCES)
@@ -443,7 +445,7 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NNRF_DISC)
+        case OpenAPI_service_name_nnrf_disc:
             SWITCH(sbi_message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_NF_INSTANCES)
                 sbi_xact_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
@@ -483,11 +485,11 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAUSF_AUTH)
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_UECM)
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_AM_POLICY_CONTROL)
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        case OpenAPI_service_name_nausf_auth:
+        case OpenAPI_service_name_nudm_uecm:
+        case OpenAPI_service_name_nudm_sdm:
+        case OpenAPI_service_name_npcf_am_policy_control:
+        case OpenAPI_service_name_namf_comm:
             sbi_xact_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             ogs_assert(sbi_xact_id >= OGS_MIN_POOL_ID &&
                     sbi_xact_id <= OGS_MAX_POOL_ID);
@@ -524,7 +526,7 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             ogs_fsm_dispatch(&amf_ue->sm, e);
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        case OpenAPI_service_name_nsmf_pdusession:
             sbi_xact_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             ogs_assert(sbi_xact_id >= OGS_MIN_POOL_ID &&
                     sbi_xact_id <= OGS_MAX_POOL_ID);
@@ -549,6 +551,8 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
 
                 if (ctx->ran_ue_id != OGS_INVALID_POOL_ID)
                     ran_ue_id = ctx->ran_ue_id;
+                if (ctx->target_ue_id != OGS_INVALID_POOL_ID)
+                    target_ue_id = ctx->target_ue_id;
             }
 
             ogs_sbi_xact_remove(sbi_xact);
@@ -605,7 +609,8 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             SWITCH(sbi_message.h.resource.component[2])
             CASE(OGS_SBI_RESOURCE_NAME_MODIFY)
                 amf_nsmf_pdusession_handle_update_sm_context(
-                        amf_ue, ran_ue, sess, state, &sbi_message);
+                        amf_ue, ran_ue, sess, state, target_ue_id,
+                        &sbi_message);
                 break;
 
             CASE(OGS_SBI_RESOURCE_NAME_RELEASE)
@@ -651,7 +656,7 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NNSSF_NSSELECTION)
+        case OpenAPI_service_name_nnssf_nsselection:
             sbi_xact_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             ogs_assert(sbi_xact_id >= OGS_MIN_POOL_ID &&
                     sbi_xact_id <= OGS_MAX_POOL_ID);
@@ -701,10 +706,10 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                     amf_ue, ran_ue, sess, state, &sbi_message);
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid service name [%s]", sbi_message.h.service.name);
             ogs_assert_if_reached();
-        END
+        }
 
         ogs_sbi_message_free(&sbi_message);
         ogs_sbi_response_free(sbi_response);
@@ -735,24 +740,26 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             subscription_data = e->h.sbi.data;
             ogs_assert(subscription_data);
 
-            ogs_assert(true ==
-                ogs_nnrf_nfm_send_nf_status_subscribe(
-                    ogs_sbi_self()->nf_instance->nf_type,
-                    subscription_data->req_nf_instance_id,
-                    subscription_data->subscr_cond.nf_type,
-                    subscription_data->subscr_cond.service_name));
-
             ogs_error("[%s] Subscription validity expired",
-                subscription_data->id);
-            ogs_sbi_subscription_data_remove(subscription_data);
+                    subscription_data->id ?
+                        subscription_data->id : "Unknown");
+
+            /*
+             * Helper strdup-s the fields we need, removes the old
+             * subscription so the pool slot is freed, then resubscribes.
+             */
+            (void)ogs_nnrf_nfm_send_nf_status_subscribe_renew(
+                    subscription_data);
             break;
 
         case OGS_TIMER_SUBSCRIPTION_PATCH:
             subscription_data = e->h.sbi.data;
             ogs_assert(subscription_data);
 
-            ogs_assert(true ==
-                ogs_nnrf_nfm_send_nf_status_update(subscription_data));
+            if (ogs_nnrf_nfm_send_nf_status_update(subscription_data) != true)
+                ogs_error("[%s] NF status subscription update failed",
+                        subscription_data->id ?
+                            subscription_data->id : "Unknown");
 
             ogs_info("[%s] Need to update Subscription",
                     subscription_data->id);
@@ -797,145 +804,7 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                 break;
             }
 
-            sbi_object = sbi_xact->sbi_object;
-            ogs_assert(sbi_object);
-
-            sbi_object_id = sbi_xact->sbi_object_id;
-            ogs_assert(sbi_object_id >= OGS_MIN_POOL_ID &&
-                    sbi_object_id <= OGS_MAX_POOL_ID);
-
-            if (sbi_xact->user_data) {
-                amf_sbi_xact_ctx_t *ctx = sbi_xact->user_data;
-
-                if (ctx->ran_ue_id != OGS_INVALID_POOL_ID)
-                    ran_ue_id = ctx->ran_ue_id;
-            }
-
-            service_type = sbi_xact->service_type;
-            requester_nf_type = sbi_xact->requester_nf_type;
-            discovery_option = sbi_xact->discovery_option;
-
-            ogs_sbi_xact_remove(sbi_xact);
-
-            ogs_assert(sbi_object->type > OGS_SBI_OBJ_BASE &&
-                        sbi_object->type < OGS_SBI_OBJ_TOP);
-
-            switch(sbi_object->type) {
-            case OGS_SBI_OBJ_UE_TYPE:
-                amf_ue = amf_ue_find_by_id(sbi_object_id);
-                if (!amf_ue) {
-                    ogs_error("UE(amf_ue) Context has already been removed");
-                    break;
-                }
-
-                ogs_error("[%s:%s] Cannot receive SBI message "
-                        "[type:%d,value:%d]", amf_ue->supi, amf_ue->suci,
-                        amf_ue->nas.message_type,
-                        amf_ue->nas.registration.value);
-
-                /*
-                * TS 23.502
-                * 4.2.2.2.2 General Registration
-                * If the SUCI is not provided by the UE nor retrieved from the old AMF the Identity Request
-                * procedure is initiated by AMF sending an Identity Request message to the UE requesting the SUCI.
-                */
-
-                if (amf_ue->nas.message_type == OGS_NAS_5GS_REGISTRATION_REQUEST &&
-                        amf_ue->nas.registration.value == OGS_NAS_5GS_REGISTRATION_TYPE_INITIAL &&
-                        requester_nf_type == OpenAPI_nf_type_AMF &&
-                        discovery_option->guami_presence) {
-
-                    amf_ue->amf_ue_context_transfer_state =
-                            UE_CONTEXT_INITIAL_STATE;
-
-                    if (!(AMF_UE_HAVE_SUCI(amf_ue) ||
-                            AMF_UE_HAVE_SUPI(amf_ue))) {
-                            CLEAR_AMF_UE_TIMER(amf_ue->t3570);
-                        rv = nas_5gs_send_identity_request(amf_ue);
-                        ogs_expect(rv == OGS_OK);
-                        ogs_assert(rv != OGS_ERROR);
-
-                        break;
-                    }
-                } else if (amf_ue->nas.message_type ==
-                        OGS_NAS_5GS_DEREGISTRATION_REQUEST_FROM_UE) {
-                    ogs_error("T3522 expired");
-                    break;
-                }
-
-                r = nas_5gs_send_gmm_reject_from_sbi(amf_ue,
-                        OGS_SBI_HTTP_STATUS_GATEWAY_TIMEOUT);
-                ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
-                break;
-
-            case OGS_SBI_OBJ_SESS_TYPE:
-                sess = amf_sess_find_by_id(sbi_object_id);
-                if (!sess) {
-                    ogs_error("Session has already been removed");
-                    break;
-                }
-
-                amf_ue = amf_ue_find_by_id(sess->amf_ue_id);
-                if (!amf_ue) {
-                    ogs_error("UE(amf_ue) Context has already been removed");
-                    break;
-                }
-
-                ogs_error("[%s:%s:%d:%d] Cannot receive SBI message",
-                        amf_ue->supi, amf_ue->suci, sess->psi, sess->pti);
-
-                if (ran_ue_id < OGS_MIN_POOL_ID ||
-                    ran_ue_id > OGS_MAX_POOL_ID) {
-                    ogs_error("No assoc RAN-UE id [%d]", ran_ue_id);
-                    break;
-                }
-
-                ran_ue = ran_ue_find_by_id(ran_ue_id);
-                if (!ran_ue) {
-                    ogs_error("[%s:%s:%d:%d] "
-                            "NG Context has already been removed",
-                            amf_ue->supi, amf_ue->suci, sess->psi, sess->pti);
-                    break;
-                }
-
-                if (ran_ue->amf_ue_id == OGS_INVALID_POOL_ID) {
-                    ogs_error("[%s:%s:%d:%d] "
-                            "RAN-UE has already been deassociated",
-                            amf_ue->supi, amf_ue->suci, sess->psi, sess->pti);
-                    break;
-                }
-
-                if (amf_ue->id != ran_ue->amf_ue_id) {
-                    ogs_error("[%s:%s:%d:%d] AMF-UE mismatched [%d!=%d]",
-                            amf_ue->supi, amf_ue->suci, sess->psi, sess->pti,
-                            amf_ue->id, ran_ue->amf_ue_id);
-                    break;
-                }
-
-                if (sess->payload_container_type) {
-                    r = nas_5gs_send_back_gsm_message(
-                            ran_ue, sess,
-                            OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED,
-                            AMF_NAS_BACKOFF_TIME);
-                    ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
-                } else {
-                    r = ngap_send_error_indication2(
-                            ran_ue,
-                            NGAP_Cause_PR_transport,
-                            NGAP_CauseTransport_transport_resource_unavailable);
-                    ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
-                }
-                break;
-
-            default:
-                ogs_fatal("Not implemented [%s:%d]",
-                    ogs_sbi_service_type_to_name(service_type),
-                    sbi_object->type);
-                ogs_assert_if_reached();
-            }
+            amf_nnrf_handle_failed_amf_discovery(sbi_xact);
             break;
 
         default:
@@ -1101,6 +970,121 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         }
 
         amf_ue = amf_ue_find_by_id(ran_ue->amf_ue_id);
+
+        /*
+         * REGISTRATION REQUEST on an NG context that already belongs to
+         * someone else. The 5GS counterpart of the same defect in the
+         * MME, see mme-sm.c.
+         *
+         *   InitialUEMessage(5G-S-TMSI of A) -> ran_ue bound to A
+         *   Registration Request(SUCI of B) on the same connection
+         *     -> dispatched to A's context, not to B's
+         *
+         * The identity in the message is never looked at, so
+         * amf_ue_set_suci() re-labels A's context as B and
+         * amf_ue_release_old_context() moves B's sessions into it. If A
+         * still owns sessions, that hits
+         *
+         *     ogs_assert(ogs_list_empty(&amf_ue->sess_list));
+         *
+         * and the AMF aborts. If B is unknown to the AMF there is no
+         * abort - A's sessions silently become B's instead.
+         *
+         * Any UE can get here; a stale 5G-GUTI is enough.
+         *
+         * So re-resolve the identity, and if it names someone else:
+         *
+         *   registered, or owns a session -> release, drop the message
+         *   otherwise                     -> leave it, nothing to lose
+         *
+         * Release is the same teardown a RAN-initiated UE Context
+         * Release Request gets: deactivate the sessions towards the SMF,
+         * then release the NG context. Handing the NG context over
+         * instead would leave A's user plane on a connection that now
+         * serves B.
+         *
+         * A UE Context Transfer can leave a context with a SUPI and no
+         * SUCI, so either index counts as an identity.
+         */
+        if (amf_ue &&
+            (AMF_UE_HAVE_SUCI(amf_ue) || AMF_UE_HAVE_SUPI(amf_ue)) &&
+            nas_message.gmm.h.message_type ==
+                OGS_NAS_5GS_REGISTRATION_REQUEST) {
+            amf_ue_t *registering_ue = amf_ue_find_by_message(&nas_message);
+
+            if (registering_ue != amf_ue &&
+                (OGS_FSM_CHECK(&amf_ue->sm, gmm_state_registered) ||
+                 ogs_list_count(&amf_ue->sess_list))) {
+                int old_xact_count = 0, new_xact_count = 0;
+
+                ogs_warn("Registration Request identity does not match "
+                        "the associated NG context");
+                ogs_warn("    Associated SUCI[%s] SUPI[%s] ue_id[%d] "
+                        "sessions[%d]",
+                        amf_ue->suci ? amf_ue->suci : "Unknown",
+                        amf_ue->supi ? amf_ue->supi : "Unknown",
+                        amf_ue->id, ogs_list_count(&amf_ue->sess_list));
+                if (registering_ue)
+                    ogs_warn("    Requested SUCI[%s] SUPI[%s] ue_id[%d] "
+                            "sessions[%d]",
+                            registering_ue->suci ?
+                                registering_ue->suci : "Unknown",
+                            registering_ue->supi ?
+                                registering_ue->supi : "Unknown",
+                            registering_ue->id,
+                            ogs_list_count(&registering_ue->sess_list));
+                else
+                    ogs_warn("    Requested identity has no AMF-UE "
+                            "context yet");
+                ogs_warn("    RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld]",
+                        (long long)ran_ue->ran_ue_ngap_id,
+                        (long long)ran_ue->amf_ue_ngap_id);
+
+                /* Same teardown as a RAN-initiated release request */
+                CLEAR_AMF_UE_ALL_TIMERS(amf_ue);
+
+                old_xact_count = amf_sess_xact_count(amf_ue);
+
+                ran_ue->deactivation.group = NGAP_Cause_PR_nas;
+                ran_ue->deactivation.cause = NGAP_CauseNas_normal_release;
+
+                amf_sbi_send_deactivate_all_sessions(
+                        ran_ue, amf_ue, AMF_UPDATE_SM_CONTEXT_DEACTIVATED,
+                        NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release);
+
+                new_xact_count = amf_sess_xact_count(amf_ue);
+
+                if (old_xact_count == new_xact_count) {
+                    /*
+                     * Nothing was sent to the SMF, so release from here.
+                     * Which action depends on what we are keeping:
+                     *
+                     *   registered -> NG_REMOVE_AND_UNLINK
+                     *                 de-associates the RAN-UE and runs
+                     *                 the mobile reachable timer, which
+                     *                 is what ages the context out
+                     *   otherwise  -> NG_CONTEXT_REMOVE, as in
+                     *                 ngap_handle_initial_context_setup_
+                     *                 failure(); the mobile reachable
+                     *                 timer is only handled in the
+                     *                 de-registered and registered
+                     *                 states, so starting it here would
+                     *                 fire into a state that ignores it
+                     */
+                    r = ngap_send_ran_ue_context_release_command(ran_ue,
+                            NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release,
+                            OGS_FSM_CHECK(&amf_ue->sm, gmm_state_registered) ?
+                                NGAP_UE_CTX_REL_NG_REMOVE_AND_UNLINK :
+                                NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0);
+                    ogs_expect(r == OGS_OK);
+                    ogs_assert(r != OGS_ERROR);
+                }
+
+                ogs_pkbuf_free(pkbuf);
+                break;
+            }
+        }
+
         if (!amf_ue) {
             amf_ue = amf_ue_find_by_message(&nas_message);
             if (!amf_ue) {

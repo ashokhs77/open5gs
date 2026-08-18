@@ -40,8 +40,10 @@ void bsf_state_final(ogs_fsm_t *s, bsf_event_t *e)
 void bsf_state_operational(ogs_fsm_t *s, bsf_event_t *e)
 {
     int rv;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     bsf_sess_t *sess = NULL;
+    bool invalid = false;
 
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
@@ -100,8 +102,10 @@ void bsf_state_operational(ogs_fsm_t *s, bsf_event_t *e)
             break;
         }
 
-        SWITCH(message.h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NNRF_NFM)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                message.h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nnrf_nfm:
 
             SWITCH(message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_NF_STATUS_NOTIFY)
@@ -130,7 +134,7 @@ void bsf_state_operational(ogs_fsm_t *s, bsf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NBSF_MANAGEMENT)
+        case OpenAPI_service_name_nbsf_management:
             SWITCH(message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_PCF_BINDINGS)
                 if (message.h.resource.component[1]) {
@@ -143,28 +147,84 @@ void bsf_state_operational(ogs_fsm_t *s, bsf_event_t *e)
                             (message.PcfBinding->ipv4_addr ||
                              message.PcfBinding->ipv6_prefix)) {
 
-                            if (message.PcfBinding->ipv4_addr)
+                            if (message.PcfBinding->ipv4_addr) {
                                 sess = bsf_sess_find_by_ipv4addr(
+                                            message.PcfBinding->ipv4_addr,
+                                            &invalid);
+                                if (invalid) {
+                                    ogs_error("Invalid IPv4 address [%s]",
                                             message.PcfBinding->ipv4_addr);
-                            if (!sess && message.PcfBinding->ipv6_prefix)
+                                    ogs_assert(true ==
+                                        ogs_sbi_server_send_error(stream,
+                                            OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                                            &message, "Invalid IPv4 address",
+                                            message.PcfBinding->ipv4_addr,
+                                            NULL));
+                                    goto cleanup;
+                                }
+                            }
+                            if (!sess && message.PcfBinding->ipv6_prefix) {
                                 sess = bsf_sess_find_by_ipv6prefix(
+                                            message.PcfBinding->ipv6_prefix,
+                                            &invalid);
+                                if (invalid) {
+                                    ogs_error("Invalid IPv6 prefix [%s]",
                                             message.PcfBinding->ipv6_prefix);
+                                    ogs_assert(true ==
+                                        ogs_sbi_server_send_error(stream,
+                                            OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                                            &message, "Invalid IPv6 prefix",
+                                            message.PcfBinding->ipv6_prefix,
+                                            NULL));
+                                    goto cleanup;
+                                }
+                            }
 
                             if (!sess) {
                                 sess = bsf_sess_add_by_ip_address(
                                             message.PcfBinding->ipv4_addr,
                                             message.PcfBinding->ipv6_prefix);
-                                ogs_assert(sess);
+                                if (!sess) {
+                                    ogs_error("Cannot add BSF session");
+                                    ogs_assert(true ==
+                                        ogs_sbi_server_send_error(stream,
+                                            OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                                            &message, "Cannot add BSF session",
+                                            NULL, NULL));
+                                    goto cleanup;
+                                }
                             }
                         }
                         break;
                     CASE(OGS_SBI_HTTP_METHOD_GET)
-                        if (message.param.ipv4addr)
+                        if (message.param.ipv4addr) {
                             sess = bsf_sess_find_by_ipv4addr(
+                                        message.param.ipv4addr, &invalid);
+                            if (invalid) {
+                                ogs_error("Invalid IPv4 address [%s]",
                                         message.param.ipv4addr);
-                        if (!sess && message.param.ipv6prefix)
+                                ogs_assert(true ==
+                                    ogs_sbi_server_send_error(stream,
+                                        OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                                        &message, "Invalid IPv4 address",
+                                        message.param.ipv4addr, NULL));
+                                goto cleanup;
+                            }
+                        }
+                        if (!sess && message.param.ipv6prefix) {
                             sess = bsf_sess_find_by_ipv6prefix(
+                                        message.param.ipv6prefix, &invalid);
+                            if (invalid) {
+                                ogs_error("Invalid IPv6 prefix [%s]",
                                         message.param.ipv6prefix);
+                                ogs_assert(true ==
+                                    ogs_sbi_server_send_error(stream,
+                                        OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                                        &message, "Invalid IPv6 prefix",
+                                        message.param.ipv6prefix, NULL));
+                                goto cleanup;
+                            }
+                        }
                         break;
                     DEFAULT
                         ogs_error("Invalid HTTP method [%s]", message.h.method);
@@ -195,15 +255,16 @@ void bsf_state_operational(ogs_fsm_t *s, bsf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", message.h.service.name);
             ogs_assert(true ==
                 ogs_sbi_server_send_error(stream,
                     OGS_SBI_HTTP_STATUS_BAD_REQUEST, &message,
                     "Invalid API name", message.h.service.name, NULL));
-        END
+        }
 
         /* In lib/sbi/server.c, notify_completed() releases 'request' buffer. */
+cleanup:
         ogs_sbi_message_free(&message);
         break;
 
@@ -227,8 +288,10 @@ void bsf_state_operational(ogs_fsm_t *s, bsf_event_t *e)
             break;
         }
 
-        SWITCH(message.h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NNRF_NFM)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                message.h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nnrf_nfm:
 
             SWITCH(message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_NF_INSTANCES)
@@ -319,7 +382,7 @@ void bsf_state_operational(ogs_fsm_t *s, bsf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NNRF_DISC)
+        case OpenAPI_service_name_nnrf_disc:
             SWITCH(message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_NF_INSTANCES)
                 sbi_xact_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
@@ -357,10 +420,10 @@ void bsf_state_operational(ogs_fsm_t *s, bsf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid service name [%s]", message.h.service.name);
             ogs_assert_if_reached();
-        END
+        }
 
         ogs_sbi_message_free(&message);
         ogs_sbi_response_free(response);
@@ -391,24 +454,26 @@ void bsf_state_operational(ogs_fsm_t *s, bsf_event_t *e)
             subscription_data = e->h.sbi.data;
             ogs_assert(subscription_data);
 
-            ogs_assert(true ==
-                ogs_nnrf_nfm_send_nf_status_subscribe(
-                    ogs_sbi_self()->nf_instance->nf_type,
-                    subscription_data->req_nf_instance_id,
-                    subscription_data->subscr_cond.nf_type,
-                    subscription_data->subscr_cond.service_name));
-
             ogs_error("[%s] Subscription validity expired",
-                subscription_data->id);
-            ogs_sbi_subscription_data_remove(subscription_data);
+                    subscription_data->id ?
+                        subscription_data->id : "Unknown");
+
+            /*
+             * Helper strdup-s the fields we need, removes the old
+             * subscription so the pool slot is freed, then resubscribes.
+             */
+            (void)ogs_nnrf_nfm_send_nf_status_subscribe_renew(
+                    subscription_data);
             break;
 
         case OGS_TIMER_SUBSCRIPTION_PATCH:
             subscription_data = e->h.sbi.data;
             ogs_assert(subscription_data);
 
-            ogs_assert(true ==
-                ogs_nnrf_nfm_send_nf_status_update(subscription_data));
+            if (ogs_nnrf_nfm_send_nf_status_update(subscription_data) != true)
+                ogs_error("[%s] NF status subscription update failed",
+                        subscription_data->id ?
+                            subscription_data->id : "Unknown");
 
             ogs_info("[%s] Need to update Subscription",
                     subscription_data->id);

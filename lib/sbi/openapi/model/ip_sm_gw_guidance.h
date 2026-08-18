@@ -8,20 +8,20 @@
 #define _OpenAPI_ip_sm_gw_guidance_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_ip_sm_gw_guidance_s OpenAPI_ip_sm_gw_guidance_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_ip_sm_gw_guidance_s OpenAPI_ip_sm_gw_guidance_t;
-typedef struct OpenAPI_ip_sm_gw_guidance_s {
+struct OpenAPI_ip_sm_gw_guidance_s {
     int min_delivery_time;
     int recomm_delivery_time;
-} OpenAPI_ip_sm_gw_guidance_t;
+};
 
 OpenAPI_ip_sm_gw_guidance_t *OpenAPI_ip_sm_gw_guidance_create(
     int min_delivery_time,

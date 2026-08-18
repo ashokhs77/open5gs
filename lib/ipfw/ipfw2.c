@@ -74,7 +74,26 @@ int resvd_set_number = RESVD_SET;
 int ipfw_socket = -1;
 
 #if 1 /* modifed by acetcom */
-#define errx(eval, ...) ogs_log_message(OGS_LOG_ERROR, 0, __VA_ARGS__)
+/*
+ * errx() is overridden so that a malformed rule cannot exit() the daemon.
+ *
+ * Logging alone, however, lets the parser fall through and build a rule out
+ * of data that was never populated -- an unresolvable address leaves the
+ * address word zeroed and a "0.0.0.0/32" filter is installed, a bad prefix
+ * length leaves the mask zeroed and the filter widens to "any" -- while
+ * ogs_ipfw_compile_rule() still reports success to its caller.
+ *
+ * Record the failure so that ogs_ipfw_compile_rule() can reject the rule.
+ * The flag is cleared immediately before compile_rule() and read immediately
+ * after it returns; rules are compiled on the NF event loop.
+ */
+int ogs_ipfw_parse_error = 0;
+
+#define errx(eval, ...) \
+    do { \
+        ogs_ipfw_parse_error = 1; \
+        ogs_log_message(OGS_LOG_ERROR, 0, __VA_ARGS__); \
+    } while (0)
 #endif
 
 #define	CHECK_LENGTH(v, len) do {				\
@@ -3281,26 +3300,68 @@ add_mactype(ipfw_insn *cmd, char *av, int cblen)
 		return NULL;
 }
 
+/* Not static: ogs_ipfw_compile_rule() resolves the protocol name here so
+ * that the same table is used on both sides. */
+int
+ipfw_proto_by_name(const char *name)
+{
+	struct protoent *pe;
+
+	ogs_assert(name);
+
+	pe = getprotobyname(name);
+	if (pe)
+		return pe->p_proto;
+
+    /*
+     * /etc/protocols lookup failed. Warn so the operator knows the
+     * environment is degraded, then try the built-in fallback.
+     * Protocol names follow lowercase 3GPP IPFilterRule convention
+     * (TS 29.212 / TS 29.514).
+     */
+    ogs_error("getprotobyname('%s') failed; falling back to built-in table. "
+            "Check /etc/protocols (install netbase or iana-etc)", name);
+
+	/*
+	 * SDF filters commonly use protocol names such as udp/tcp.
+	 * Do not make rule compilation depend entirely on /etc/protocols
+	 * or NSS, and never abort SMF on a lookup failure.
+	 */
+	if (strcmp(name, "tcp") == 0)
+		return IPPROTO_TCP;
+	if (strcmp(name, "udp") == 0)
+		return IPPROTO_UDP;
+	if (strcmp(name, "icmp") == 0)
+		return IPPROTO_ICMP;
+#ifdef IPPROTO_ICMPV6
+	if (strcmp(name, "icmp6") == 0 ||
+	    strcmp(name, "ipv6-icmp") == 0)
+		return IPPROTO_ICMPV6;
+#endif
+#ifdef IPPROTO_SCTP
+	if (strcmp(name, "sctp") == 0)
+		return IPPROTO_SCTP;
+#endif
+
+	return -1;
+}
+
 static ipfw_insn *
 add_proto0(ipfw_insn *cmd, char *av, u_char *protop)
 {
-	struct protoent *pe;
 	char *ep;
 	int proto;
 
 	proto = strtol(av, &ep, 10);
 	if (*ep != '\0' || proto <= 0) {
-#if 0 /* modified by acetcom */
-		if ((pe = getprotobyname(av)) == NULL)
+		proto = ipfw_proto_by_name(av);
+		if (proto < 0) {
+			ogs_ipfw_parse_error = 1;
+			ogs_error("Unknown protocol '%s' in flow description "
+					"(getprotobyname() failed; "
+					"check /etc/protocols)", av);
 			return NULL;
-#else
-		if ((pe = getprotobyname(av)) == NULL) {
-            ogs_fatal("getprotobyname('%s') failed", av);
-            ogs_assert_if_reached();
-			return NULL;
-        }
-#endif
-		proto = pe->p_proto;
+		}
 	}
 
 	fill_cmd(cmd, O_PROTO, 0, proto);

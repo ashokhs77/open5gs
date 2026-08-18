@@ -8,23 +8,23 @@
 #define _OpenAPI_model_3_g_aka_av_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_model_3_g_aka_av_s OpenAPI_model_3_g_aka_av_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_model_3_g_aka_av_s OpenAPI_model_3_g_aka_av_t;
-typedef struct OpenAPI_model_3_g_aka_av_s {
+struct OpenAPI_model_3_g_aka_av_s {
     char *rand;
     char *xres;
     char *autn;
     char *ck;
     char *ik;
-} OpenAPI_model_3_g_aka_av_t;
+};
 
 OpenAPI_model_3_g_aka_av_t *OpenAPI_model_3_g_aka_av_create(
     char *rand,

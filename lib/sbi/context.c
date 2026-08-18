@@ -631,8 +631,15 @@ int ogs_sbi_context_parse_config(
                         }
 
                         v = ogs_yaml_iter_value(&service_name_iter);
-                        if (v && strlen(v))
-                            self.service_name[self.num_of_service_name++] = v;
+                        if (v && strlen(v)) {
+                            OpenAPI_service_name_e name =
+                                OpenAPI_service_name_FromString((char *)v);
+                            if (name)
+                                self.service_name[self.num_of_service_name++] =
+                                    name;
+                            else
+                                ogs_warn("unknown service-name `%s`", v);
+                        }
 
                     } while (ogs_yaml_iter_type(
                                 &service_name_iter) == YAML_SEQUENCE_NODE);
@@ -1210,7 +1217,7 @@ ogs_sbi_client_t *ogs_sbi_context_parse_client_config(ogs_yaml_iter_t *iter)
     return client;
 }
 
-bool ogs_sbi_nf_service_is_available(const char *name)
+bool ogs_sbi_nf_service_is_available(const OpenAPI_service_name_e name)
 {
     int i;
 
@@ -1222,7 +1229,7 @@ bool ogs_sbi_nf_service_is_available(const char *name)
 
     for (i = 0; i < self.num_of_service_name; i++)
         /* Only services in the configuration are available */
-        if (strcmp(self.service_name[i], name) == 0)
+        if (self.service_name[i] == name)
             return true;
 
     return false;
@@ -1233,7 +1240,11 @@ ogs_sbi_nf_instance_t *ogs_sbi_nf_instance_add(void)
     ogs_sbi_nf_instance_t *nf_instance = NULL;
 
     ogs_pool_alloc(&nf_instance_pool, &nf_instance);
-    ogs_assert(nf_instance);
+    if (!nf_instance) {
+        ogs_error("OVERFLOW nf_instance_pool [pool:%llu]",
+                (unsigned long long)ogs_app()->pool.nf);
+        return NULL;
+    }
     memset(nf_instance, 0, sizeof(ogs_sbi_nf_instance_t));
 
     nf_instance->time.heartbeat_interval =
@@ -1339,6 +1350,9 @@ void ogs_sbi_nf_instance_clear(ogs_sbi_nf_instance_t *nf_instance)
     nf_instance->num_of_ipv6 = 0;
 
     nf_instance->num_of_allowed_nf_type = 0;
+
+    nf_instance->num_of_s_nssai = 0;
+    nf_instance->num_of_allowed_nssai = 0;
 }
 
 void ogs_sbi_nf_instance_remove(ogs_sbi_nf_instance_t *nf_instance)
@@ -1392,7 +1406,7 @@ ogs_sbi_nf_instance_t *ogs_sbi_nf_instance_find(char *id)
      * even if the 'id' is NULL as in the use case below.
      *
      * ogs_sbi_nf_instance_find(
-     *    sess->sbi.service_type_array[service_type].nf_instance_id));
+     *    sess->sbi.service_name_array[service_name].nf_instance_id));
      *
      * To do so, we changed the 'assert(id)' to 'if (!id) return NULL',
      * as shown below.
@@ -1429,22 +1443,19 @@ ogs_sbi_nf_instance_t *ogs_sbi_nf_instance_find_by_discovery_param(
     return NULL;
 }
 
-ogs_sbi_nf_instance_t *ogs_sbi_nf_instance_find_by_service_type(
-        ogs_sbi_service_type_e service_type,
+ogs_sbi_nf_instance_t *ogs_sbi_nf_instance_find_by_service(
+        OpenAPI_service_name_e service_name,
         OpenAPI_nf_type_e requester_nf_type)
 {
     ogs_sbi_nf_instance_t *nf_instance = NULL;
     ogs_sbi_discovery_option_t *discovery_option = NULL;
 
     OpenAPI_nf_type_e target_nf_type = OpenAPI_nf_type_NULL;
-    char *service_name = NULL;
 
     ogs_assert(requester_nf_type);
-    ogs_assert(service_type);
-    target_nf_type = ogs_sbi_service_type_to_nf_type(service_type);
-    ogs_assert(target_nf_type);
-    service_name = (char *)ogs_sbi_service_type_to_name(service_type);
     ogs_assert(service_name);
+    target_nf_type = ogs_sbi_service_name_to_nf_type(service_name);
+    ogs_assert(target_nf_type);
 
     discovery_option = ogs_sbi_discovery_option_new();
     ogs_assert(discovery_option);
@@ -1458,14 +1469,12 @@ ogs_sbi_nf_instance_t *ogs_sbi_nf_instance_find_by_service_type(
     return nf_instance;
 }
 
-bool ogs_sbi_nf_instance_maximum_number_is_reached(void)
-{
-    return nf_instance_pool.avail <= 0;
-}
 
 ogs_sbi_nf_service_t *ogs_sbi_nf_service_add(
         ogs_sbi_nf_instance_t *nf_instance,
-        char *id, const char *name, OpenAPI_uri_scheme_e scheme)
+        char *id,
+        const OpenAPI_service_name_e name,
+        OpenAPI_uri_scheme_e scheme)
 {
     ogs_sbi_nf_service_t *nf_service = NULL;
 
@@ -1474,13 +1483,26 @@ ogs_sbi_nf_service_t *ogs_sbi_nf_service_add(
     ogs_assert(name);
 
     ogs_pool_alloc(&nf_service_pool, &nf_service);
-    ogs_assert(nf_service);
+    if (!nf_service) {
+        ogs_error("OVERFLOW nf_service_pool [pool:%llu]",
+                (unsigned long long)ogs_app()->pool.nf_service);
+        return NULL;
+    }
     memset(nf_service, 0, sizeof(ogs_sbi_nf_service_t));
 
     nf_service->id = ogs_strdup(id);
-    ogs_assert(nf_service->id);
-    nf_service->name = ogs_strdup(name);
-    ogs_assert(nf_service->name);
+    if (!nf_service->id) {
+        ogs_error("ogs_strdup() failed for nf_service->id");
+        ogs_pool_free(&nf_service_pool, nf_service);
+        return NULL;
+    }
+    nf_service->name = name;
+    if (!nf_service->name) {
+        ogs_error("ogs_strdup() failed for nf_service->name");
+        ogs_free(nf_service->id);
+        ogs_pool_free(&nf_service_pool, nf_service);
+        return NULL;
+    }
     nf_service->scheme = scheme;
     ogs_assert(nf_service->scheme);
 
@@ -1553,10 +1575,9 @@ bool ogs_sbi_nf_service_is_allowed_nf_type(
             return true;
     }
 
-    ogs_assert(nf_service->name);
     ogs_error("Not allowed nf-type[%s] in nf-service[%s]",
             OpenAPI_nf_type_ToString(allowed_nf_type),
-            nf_service->name);
+            OpenAPI_service_name_ToString(nf_service->name));
     return false;
 }
 
@@ -1607,9 +1628,6 @@ void ogs_sbi_nf_service_remove(ogs_sbi_nf_service_t *nf_service)
     ogs_assert(nf_service->id);
     ogs_free(nf_service->id);
 
-    ogs_assert(nf_service->name);
-    ogs_free(nf_service->name);
-
     ogs_sbi_nf_service_clear(nf_service);
 
     if (nf_service->client)
@@ -1647,7 +1665,7 @@ ogs_sbi_nf_service_t *ogs_sbi_nf_service_find_by_id(
 }
 
 ogs_sbi_nf_service_t *ogs_sbi_nf_service_find_by_name(
-        ogs_sbi_nf_instance_t *nf_instance, char *name)
+        ogs_sbi_nf_instance_t *nf_instance, OpenAPI_service_name_e name)
 {
     ogs_sbi_nf_service_t *nf_service = NULL;
 
@@ -1655,8 +1673,7 @@ ogs_sbi_nf_service_t *ogs_sbi_nf_service_find_by_name(
     ogs_assert(name);
 
     ogs_list_for_each(&nf_instance->nf_service_list, nf_service) {
-        ogs_assert(nf_service->name);
-        if (strcmp(nf_service->name, name) == 0)
+        if (nf_service->name == name)
             return nf_service;
     }
 
@@ -1673,7 +1690,9 @@ ogs_sbi_nf_info_t *ogs_sbi_nf_info_add(
 
     ogs_pool_alloc(&nf_info_pool, &nf_info);
     if (!nf_info) {
-        ogs_fatal("ogs_pool_alloc() failed");
+        ogs_error("OVERFLOW nf_info_pool [pool:%llu]",
+                (unsigned long long)(ogs_app()->pool.nf *
+                    OGS_MAX_NUM_OF_NF_INFO));
         return NULL;
     }
     memset(nf_info, 0, sizeof(*nf_info));
@@ -1911,7 +1930,7 @@ void ogs_sbi_nf_instance_build_default(ogs_sbi_nf_instance_t *nf_instance)
 }
 
 ogs_sbi_nf_service_t *ogs_sbi_nf_service_build_default(
-        ogs_sbi_nf_instance_t *nf_instance, const char *name)
+        ogs_sbi_nf_instance_t *nf_instance, OpenAPI_service_name_e name)
 {
     ogs_sbi_server_t *server = NULL;
     ogs_sbi_nf_service_t *nf_service = NULL;
@@ -1934,7 +1953,15 @@ ogs_sbi_nf_service_t *ogs_sbi_nf_service_build_default(
     ogs_assert(scheme);
 
     nf_service = ogs_sbi_nf_service_add(nf_instance, id, name, scheme);
-    ogs_assert(nf_service);
+    if (!nf_service) {
+        ogs_error("Cannot build default NF service [%s]: "
+                "nf_service_pool exhausted at startup. "
+                "Increase 'max.peer' (current pool capacity = "
+                "max.peer * 16 = %llu).",
+                OpenAPI_service_name_ToString(name),
+                (unsigned long long)ogs_app()->pool.nf_service);
+        return NULL;
+    }
 
     hostname = NULL;
     for (server = ogs_sbi_server_first();
@@ -1982,7 +2009,8 @@ ogs_sbi_nf_service_t *ogs_sbi_nf_service_build_default(
         ogs_assert(nf_service->fqdn);
     }
 
-    ogs_info("NF Service [%s]", nf_service->name);
+    ogs_info("NF Service [%s]",
+            OpenAPI_service_name_ToString(nf_service->name));
 
     return nf_service;
 }
@@ -2103,11 +2131,13 @@ static void nf_service_associate_client(ogs_sbi_nf_service_t *nf_service)
     } else
         ogs_error("[%s] No service-level endpoint, "
                 "client association skipped [id:%s]",
-                nf_service->name, nf_service->id);
+                OpenAPI_service_name_ToString(nf_service->name),
+                nf_service->id);
 
     if (client) {
         ogs_info("[%s] NFService associated [%s]",
-                nf_service->name, nf_service->id);
+                OpenAPI_service_name_ToString(nf_service->name),
+                nf_service->id);
         OGS_SBI_SETUP_CLIENT(nf_service, client);
     }
 }
@@ -2162,6 +2192,34 @@ bool ogs_sbi_discovery_option_is_matched(
         ogs_sbi_discovery_option_hnrf_uri_is_matched(
             nf_instance, discovery_option) == false)
         return false;
+
+    /*
+     * TS 33.518 4.2.2.2.1 - Target allowed_nssai filtering
+     *
+     * If the target NF registered with allowedNssais, it may only be
+     * discovered for queries whose S-NSSAI falls within that set.
+     */
+    if (nf_instance->num_of_allowed_nssai &&
+            discovery_option->num_of_snssais) {
+        bool nssai_allowed = false;
+
+        for (i = 0; i < discovery_option->num_of_snssais; i++) {
+            int j;
+            for (j = 0; j < nf_instance->num_of_allowed_nssai; j++) {
+                if (discovery_option->snssais[i].sst ==
+                        nf_instance->allowed_nssai[j].sst &&
+                    discovery_option->snssais[i].sd.v ==
+                        nf_instance->allowed_nssai[j].sd.v) {
+                    nssai_allowed = true;
+                    break;
+                }
+            }
+            if (nssai_allowed) break;
+        }
+
+        if (!nssai_allowed)
+            return false;
+    }
 
     /* Determine which SMF filters are requested */
     if (nf_instance->nf_type == OpenAPI_nf_type_SMF) {
@@ -2258,8 +2316,7 @@ bool ogs_sbi_discovery_option_service_names_is_matched(
         for (i = 0; i < discovery_option->num_of_service_names; i++) {
             if (nf_service->name &&
                 discovery_option->service_names[i] &&
-                strcmp(nf_service->name,
-                    discovery_option->service_names[i]) == 0) {
+                nf_service->name == discovery_option->service_names[i]) {
                 if (ogs_sbi_nf_service_is_allowed_nf_type(
                         nf_service, requester_nf_type) == true) {
                     return true;
@@ -2481,15 +2538,22 @@ ogs_sbi_client_t *ogs_sbi_client_find_by_service_name(
         ogs_sbi_nf_instance_t *nf_instance, char *name, char *version)
 {
     ogs_sbi_nf_service_t *nf_service = NULL;
+    OpenAPI_service_name_e service_name = OpenAPI_service_name_NULL;
     int i;
 
     ogs_assert(nf_instance);
     ogs_assert(name);
     ogs_assert(version);
 
+    service_name = OpenAPI_service_name_FromString(name);
+    if (!service_name) {
+        ogs_error("Invalid service-name[%s]", name);
+        return NULL;
+    }
+
     ogs_list_for_each(&nf_instance->nf_service_list, nf_service) {
         ogs_assert(nf_service->name);
-        if (strcmp(nf_service->name, name) == 0) {
+        if (nf_service->name == service_name) {
             for (i = 0; i < nf_service->num_of_version; i++) {
                 if (strcmp(nf_service->version[i].in_uri, version) == 0) {
                     return nf_service->client;
@@ -2501,18 +2565,17 @@ ogs_sbi_client_t *ogs_sbi_client_find_by_service_name(
     return NULL;
 }
 
-ogs_sbi_client_t *ogs_sbi_client_find_by_service_type(
+ogs_sbi_client_t *ogs_sbi_client_find_by_service(
         ogs_sbi_nf_instance_t *nf_instance,
-        ogs_sbi_service_type_e service_type)
+        OpenAPI_service_name_e service_name)
 {
     ogs_sbi_nf_service_t *nf_service = NULL;
 
     ogs_assert(nf_instance);
-    ogs_assert(service_type);
+    ogs_assert(service_name);
 
     ogs_list_for_each(&nf_instance->nf_service_list, nf_service) {
-        ogs_assert(nf_service->name);
-        if (ogs_sbi_service_type_from_name(nf_service->name) == service_type)
+        if (nf_service->name == service_name)
             return nf_service->client;
     }
 
@@ -2532,9 +2595,9 @@ void ogs_sbi_object_free(ogs_sbi_object_t *sbi_object)
             OGS_SBI_XACT_LOG(xact);
     }
 
-    for (i = 0; i < OGS_SBI_MAX_NUM_OF_SERVICE_TYPE; i++) {
-        if (sbi_object->service_type_array[i].nf_instance_id)
-            ogs_free(sbi_object->service_type_array[i].nf_instance_id);
+    for (i = 0; i < OGS_SBI_MAX_NUM_OF_SERVICE_NAME; i++) {
+        if (sbi_object->service_name_array[i].nf_instance_id)
+            ogs_free(sbi_object->service_name_array[i].nf_instance_id);
     }
     for (i = 0; i < OGS_SBI_MAX_NUM_OF_NF_TYPE; i++) {
         if (sbi_object->nf_type_array[i].nf_instance_id)
@@ -2547,7 +2610,7 @@ void ogs_sbi_object_free(ogs_sbi_object_t *sbi_object)
 ogs_sbi_xact_t *ogs_sbi_xact_add(
         ogs_pool_id_t sbi_object_id,
         ogs_sbi_object_t *sbi_object,
-        ogs_sbi_service_type_e service_type,
+        OpenAPI_service_name_e service_name,
         ogs_sbi_discovery_option_t *discovery_option,
         ogs_sbi_build_f build, void *context, void *data)
 {
@@ -2563,7 +2626,7 @@ ogs_sbi_xact_t *ogs_sbi_xact_add(
 
     xact->sbi_object_id = sbi_object_id;
     xact->sbi_object = sbi_object;
-    xact->service_type = service_type;
+    xact->service_name = service_name;
     xact->requester_nf_type = NF_INSTANCE_TYPE(ogs_sbi_self()->nf_instance);
     ogs_assert(xact->requester_nf_type);
 
@@ -2584,8 +2647,7 @@ ogs_sbi_xact_t *ogs_sbi_xact_add(
 
     if (!discovery_option->num_of_service_names) {
         ogs_sbi_discovery_option_add_service_names(
-                discovery_option,
-                (char *)ogs_sbi_service_type_to_name(service_type));
+                discovery_option, service_name);
     }
     xact->discovery_option = discovery_option;
 
@@ -2621,8 +2683,8 @@ ogs_sbi_xact_t *ogs_sbi_xact_add(
         if (!xact->request->h.uri) {
             const char *service_name = NULL;
 
-            ogs_assert(xact->service_type);
-            service_name = ogs_sbi_service_type_to_name(xact->service_type);
+            ogs_assert(xact->service_name);
+            service_name = OpenAPI_service_name_ToString(xact->service_name);
             ogs_assert(service_name);
             ogs_assert(xact->request->h.service.name);
 
@@ -2639,7 +2701,7 @@ ogs_sbi_xact_t *ogs_sbi_xact_add(
 
             if (strcmp(service_name, xact->request->h.service.name) != 0) {
                 ogs_fatal("[%s:%d] is not the same with [%s]",
-                            service_name, xact->service_type,
+                            service_name, xact->service_name,
                             xact->request->h.service.name);
                 ogs_assert_if_reached();
             }
@@ -2673,6 +2735,30 @@ void ogs_sbi_xact_remove(ogs_sbi_xact_t *xact)
         ogs_free(xact->target_apiroot);
 
     /*
+     * Detach from the originating stream's xact_list, if attached.
+     *
+     * Two paths reach here:
+     *
+     *   (a) Normal completion: a response arrived (or the send
+     *       failed early) and the NF calls ogs_sbi_xact_remove().
+     *       xact_detach() unlinks via the cached to_stream_list
+     *       head in O(1), no stream lookup needed.
+     *
+     *   (b) Stream close: stream_remove_xact_all() (or its MHD
+     *       counterpart) walks the stream's xact_list and calls
+     *       ogs_sbi_xact_remove() on each entry. This detach runs
+     *       first and unlinks the node before the for_each_safe
+     *       iterator advances; the iterator's cached "next" pointer
+     *       keeps the loop sound.
+     *
+     * Idempotent for transactions that never had an inbound stream
+     * (NRF discovery initiated by the NF itself, status
+     * notifications): to_stream_list stays NULL and the helper is
+     * a no-op.
+     */
+    ogs_sbi_server_detach_xact(xact);
+
+    /*
      * Release optional user context attached to the transaction.
      * The transaction owns this memory and is responsible for
      * freeing it when the transaction is destroyed.
@@ -2702,7 +2788,7 @@ ogs_sbi_xact_t *ogs_sbi_xact_find_by_id(ogs_pool_id_t id)
 }
 
 ogs_sbi_subscription_spec_t *ogs_sbi_subscription_spec_add(
-        OpenAPI_nf_type_e nf_type, const char *service_name)
+        OpenAPI_nf_type_e nf_type, const OpenAPI_service_name_e service_name)
 {
     ogs_sbi_subscription_spec_t *subscription_spec = NULL;
 
@@ -2716,7 +2802,7 @@ ogs_sbi_subscription_spec_t *ogs_sbi_subscription_spec_add(
     if (nf_type)
         subscription_spec->subscr_cond.nf_type = nf_type;
     else if (service_name)
-        subscription_spec->subscr_cond.service_name = ogs_strdup(service_name);
+        subscription_spec->subscr_cond.service_name = service_name;
     else {
         ogs_fatal("SubscrCond must be 'oneOf'.");
         ogs_assert_if_reached();
@@ -2733,9 +2819,6 @@ void ogs_sbi_subscription_spec_remove(
     ogs_assert(subscription_spec);
 
     ogs_list_remove(&ogs_sbi_self()->subscription_spec_list, subscription_spec);
-
-    if (subscription_spec->subscr_cond.service_name)
-        ogs_free(subscription_spec->subscr_cond.service_name);
 
     ogs_pool_free(&subscription_spec_pool, subscription_spec);
 }
@@ -2755,7 +2838,12 @@ ogs_sbi_subscription_data_t *ogs_sbi_subscription_data_add(void)
     ogs_sbi_subscription_data_t *subscription_data = NULL;
 
     ogs_pool_alloc(&subscription_data_pool, &subscription_data);
-    ogs_assert(subscription_data);
+    if (!subscription_data) {
+        ogs_error("OVERFLOW subscription_data_pool [pool:%llu]",
+                (unsigned long long)ogs_app()->pool.subscription);
+        return NULL;
+    }
+
     memset(subscription_data, 0, sizeof(ogs_sbi_subscription_data_t));
 
     ogs_list_add(&ogs_sbi_self()->subscription_data_list, subscription_data);
@@ -2806,9 +2894,6 @@ void ogs_sbi_subscription_data_remove(
     if (subscription_data->req_nf_instance_id)
         ogs_free(subscription_data->req_nf_instance_id);
 
-    if (subscription_data->subscr_cond.service_name)
-        ogs_free(subscription_data->subscr_cond.service_name);
-        
     if (subscription_data->subscr_cond.nf_instance_id)
         ogs_free(subscription_data->subscr_cond.nf_instance_id);
 
@@ -2952,6 +3037,55 @@ ogs_sbi_subscription_data_t *ogs_sbi_subscription_data_find(char *id)
     }
 
     return subscription_data;
+}
+
+bool ogs_sbi_nf_status_subscription_exists(
+        const char *req_nf_instance_id,
+        OpenAPI_nf_type_e nf_type,
+        OpenAPI_service_name_e service_name,
+        bool confirmed_only)
+{
+    ogs_sbi_subscription_data_t *subscription_data = NULL;
+    bool nf_type_present = (nf_type != OpenAPI_nf_type_NULL);
+    bool service_name_present = (service_name != OpenAPI_service_name_NULL);
+
+    ogs_assert(req_nf_instance_id);
+
+    ogs_list_for_each(
+            &ogs_sbi_self()->subscription_data_list, subscription_data) {
+        if (!subscription_data->req_nf_instance_id)
+            continue;
+
+        if (strcmp(subscription_data->req_nf_instance_id,
+                    req_nf_instance_id) != 0)
+            continue;
+
+        if (subscription_data->flags & OGS_SBI_SUBSCRIPTION_DELETE_SENT)
+            continue;
+
+        /*
+         * confirmed_only: count a subscription only after the NRF has accepted
+         * it, i.e. SubscriptionId and resource URI have been assigned from the
+         * 201 Created response. A locally pending request is not yet a valid
+         * notification context.
+         */
+        if (confirmed_only &&
+                (!subscription_data->id || !subscription_data->resource_uri))
+            continue;
+
+        if (nf_type_present &&
+            subscription_data->subscr_cond.nf_type != OpenAPI_nf_type_NULL &&
+            subscription_data->subscr_cond.nf_type == nf_type)
+            return true;
+
+        if (service_name_present &&
+            subscription_data->subscr_cond.service_name !=
+                OpenAPI_service_name_NULL &&
+            subscription_data->subscr_cond.service_name == service_name)
+            return true;
+    }
+
+    return false;
 }
 
 bool ogs_sbi_supi_in_vplmn(char *supi)

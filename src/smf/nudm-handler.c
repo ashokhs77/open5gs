@@ -190,24 +190,34 @@ bool smf_nudm_sdm_handle_get(smf_sess_t *sess, ogs_sbi_stream_t *stream,
                     sess->session.qos.arp.priority_level =
                             _5gQoSProfile->arp->priority_level;
                     if (_5gQoSProfile->arp->preempt_cap ==
-                            OpenAPI_preemption_capability_MAY_PREEMPT)
+                            OpenAPI_preemption_capability_MAY_PREEMPT) {
                         sess->session.qos.arp.pre_emption_capability =
                             OGS_5GC_PRE_EMPTION_ENABLED;
-                    else if (_5gQoSProfile->arp->preempt_cap ==
-                            OpenAPI_preemption_capability_NOT_PREEMPT)
+                    } else if (_5gQoSProfile->arp->preempt_cap ==
+                            OpenAPI_preemption_capability_NOT_PREEMPT) {
                         sess->session.qos.arp.pre_emption_capability =
                             OGS_5GC_PRE_EMPTION_DISABLED;
-                    ogs_assert(sess->session.qos.arp.pre_emption_capability);
+                    } else {
+                        ogs_error("[%s:%d] Invalid ARP preemptCap [%d]",
+                                smf_ue->supi, sess->psi,
+                                _5gQoSProfile->arp->preempt_cap);
+                        continue;
+                    }
 
                     if (_5gQoSProfile->arp->preempt_vuln ==
-                            OpenAPI_preemption_vulnerability_PREEMPTABLE)
+                            OpenAPI_preemption_vulnerability_PREEMPTABLE) {
                         sess->session.qos.arp.pre_emption_vulnerability =
                             OGS_5GC_PRE_EMPTION_ENABLED;
-                    else if (_5gQoSProfile->arp->preempt_vuln ==
-                            OpenAPI_preemption_vulnerability_NOT_PREEMPTABLE)
+                    } else if (_5gQoSProfile->arp->preempt_vuln ==
+                            OpenAPI_preemption_vulnerability_NOT_PREEMPTABLE) {
                         sess->session.qos.arp.pre_emption_vulnerability =
                             OGS_5GC_PRE_EMPTION_DISABLED;
-                    ogs_assert(sess->session.qos.arp.pre_emption_vulnerability);
+                    } else {
+                        ogs_error("[%s:%d] Invalid ARP preemptVuln [%d]",
+                                smf_ue->supi, sess->psi,
+                                _5gQoSProfile->arp->preempt_vuln);
+                        continue;
+                    }
                 }
             }
 
@@ -360,7 +370,7 @@ bool smf_nudm_sdm_handle_get(smf_sess_t *sess, ogs_sbi_stream_t *stream,
     ogs_assert(cause_value == OGS_PFCP_CAUSE_REQUEST_ACCEPTED);
 
 
-    r = smf_sbi_discover_and_send(OGS_SBI_SERVICE_TYPE_NUDM_SDM, NULL,
+    r = smf_sbi_discover_and_send(OpenAPI_service_name_nudm_sdm, NULL,
             smf_nudm_sdm_build_subscription, sess, stream, 0,
             (char *)OGS_SBI_RESOURCE_NAME_SM_DATA);
     ogs_expect(r == OGS_OK);
@@ -468,11 +478,13 @@ bool smf_nudm_sdm_handle_subscription(smf_sess_t *sess, ogs_sbi_stream_t *stream
      * If NOT Home-Routed Roaming,
      * Send HTTP_STATUS_CREATED(/nsmf-pdusession/v1/sm-context) to the AMF
      *********************************************************************/
-    if (!HOME_ROUTED_ROAMING_IN_HSMF(sess))
+    if (!HOME_ROUTED_ROAMING_IN_HSMF(sess)) {
         smf_sbi_send_sm_context_created_data(sess, stream);
+        stream = NULL;
+    }
 
     r = smf_sbi_discover_and_send(
-            OGS_SBI_SERVICE_TYPE_NPCF_SMPOLICYCONTROL, NULL,
+            OpenAPI_service_name_npcf_smpolicycontrol, NULL,
             smf_npcf_smpolicycontrol_build_create, sess, stream, 0, NULL);
     ogs_expect(r == OGS_OK);
     ogs_assert(r != OGS_ERROR);

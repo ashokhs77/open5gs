@@ -8,22 +8,22 @@
 #define _OpenAPI_relative_cartesian_location_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_relative_cartesian_location_s OpenAPI_relative_cartesian_location_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_relative_cartesian_location_s OpenAPI_relative_cartesian_location_t;
-typedef struct OpenAPI_relative_cartesian_location_s {
+struct OpenAPI_relative_cartesian_location_s {
     float x;
     float y;
     bool is_z;
     float z;
-} OpenAPI_relative_cartesian_location_t;
+};
 
 OpenAPI_relative_cartesian_location_t *OpenAPI_relative_cartesian_location_create(
     float x,

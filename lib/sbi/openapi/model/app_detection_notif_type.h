@@ -1,14 +1,14 @@
 /*
  * app_detection_notif_type.h
  *
- * 
+ * Indicates the notification type for Application Detection Control.
  */
 
 #ifndef _OpenAPI_app_detection_notif_type_H_
 #define _OpenAPI_app_detection_notif_type_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

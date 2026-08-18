@@ -8,20 +8,20 @@
 #define _OpenAPI_n2_ran_information_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_n2_ran_information_s OpenAPI_n2_ran_information_t;
 #include "n2_info_content.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_n2_ran_information_s OpenAPI_n2_ran_information_t;
-typedef struct OpenAPI_n2_ran_information_s {
+struct OpenAPI_n2_ran_information_s {
     struct OpenAPI_n2_info_content_s *n2_info_content;
-} OpenAPI_n2_ran_information_t;
+};
 
 OpenAPI_n2_ran_information_t *OpenAPI_n2_ran_information_create(
     OpenAPI_n2_info_content_t *n2_info_content

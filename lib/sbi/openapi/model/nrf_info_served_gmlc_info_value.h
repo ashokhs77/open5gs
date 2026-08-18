@@ -8,10 +8,11 @@
 #define _OpenAPI_nrf_info_served_gmlc_info_value_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_nrf_info_served_gmlc_info_value_s OpenAPI_nrf_info_served_gmlc_info_value_t;
 #include "external_client_type.h"
 #include "gmlc_info.h"
 
@@ -19,11 +20,10 @@
 extern "C" {
 #endif
 
-typedef struct OpenAPI_nrf_info_served_gmlc_info_value_s OpenAPI_nrf_info_served_gmlc_info_value_t;
-typedef struct OpenAPI_nrf_info_served_gmlc_info_value_s {
+struct OpenAPI_nrf_info_served_gmlc_info_value_s {
     OpenAPI_list_t *serving_client_types;
     OpenAPI_list_t *gmlc_numbers;
-} OpenAPI_nrf_info_served_gmlc_info_value_t;
+};
 
 OpenAPI_nrf_info_served_gmlc_info_value_t *OpenAPI_nrf_info_served_gmlc_info_value_create(
     OpenAPI_list_t *serving_client_types,

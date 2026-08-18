@@ -8,10 +8,11 @@
 #define _OpenAPI_retrieved_data_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_retrieved_data_s OpenAPI_retrieved_data_t;
 #include "af_coordination_info.h"
 #include "small_data_rate_status.h"
 
@@ -19,11 +20,10 @@
 extern "C" {
 #endif
 
-typedef struct OpenAPI_retrieved_data_s OpenAPI_retrieved_data_t;
-typedef struct OpenAPI_retrieved_data_s {
+struct OpenAPI_retrieved_data_s {
     struct OpenAPI_small_data_rate_status_s *small_data_rate_status;
     struct OpenAPI_af_coordination_info_s *af_coordination_info;
-} OpenAPI_retrieved_data_t;
+};
 
 OpenAPI_retrieved_data_t *OpenAPI_retrieved_data_create(
     OpenAPI_small_data_rate_status_t *small_data_rate_status,

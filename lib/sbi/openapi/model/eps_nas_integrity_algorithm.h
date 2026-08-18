@@ -1,14 +1,14 @@
 /*
  * eps_nas_integrity_algorithm.h
  *
- * 
+ * Indicates the supported EPS NAS Integrity Algorithm
  */
 
 #ifndef _OpenAPI_eps_nas_integrity_algorithm_H_
 #define _OpenAPI_eps_nas_integrity_algorithm_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

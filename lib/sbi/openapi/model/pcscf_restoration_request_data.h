@@ -8,25 +8,25 @@
 #define _OpenAPI_pcscf_restoration_request_data_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_pcscf_restoration_request_data_s OpenAPI_pcscf_restoration_request_data_t;
 #include "snssai.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_pcscf_restoration_request_data_s OpenAPI_pcscf_restoration_request_data_t;
-typedef struct OpenAPI_pcscf_restoration_request_data_s {
+struct OpenAPI_pcscf_restoration_request_data_s {
     char *dnn;
     char *ip_domain;
     struct OpenAPI_snssai_s *slice_info;
     char *supi;
     char *ue_ipv4;
     char *ue_ipv6;
-} OpenAPI_pcscf_restoration_request_data_t;
+};
 
 OpenAPI_pcscf_restoration_request_data_t *OpenAPI_pcscf_restoration_request_data_create(
     char *dnn,

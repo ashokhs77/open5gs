@@ -1,14 +1,14 @@
 /*
  * hss_auth_type_in_uri.h
  *
- * 
+ * Indicates a type of authentication method.
  */
 
 #ifndef _OpenAPI_hss_auth_type_in_uri_H_
 #define _OpenAPI_hss_auth_type_in_uri_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

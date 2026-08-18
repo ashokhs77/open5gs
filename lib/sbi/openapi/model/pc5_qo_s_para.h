@@ -8,21 +8,21 @@
 #define _OpenAPI_pc5_qo_s_para_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_pc5_qo_s_para_s OpenAPI_pc5_qo_s_para_t;
 #include "pc5_qos_flow_item.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_pc5_qo_s_para_s OpenAPI_pc5_qo_s_para_t;
-typedef struct OpenAPI_pc5_qo_s_para_s {
+struct OpenAPI_pc5_qo_s_para_s {
     OpenAPI_list_t *pc5_qos_flow_list;
     char *pc5_link_ambr;
-} OpenAPI_pc5_qo_s_para_t;
+};
 
 OpenAPI_pc5_qo_s_para_t *OpenAPI_pc5_qo_s_para_create(
     OpenAPI_list_t *pc5_qos_flow_list,

@@ -1,17 +1,18 @@
 /*
  * nf_load_level_information.h
  *
- * Represents load level information of a given NF instance.
+ * 
  */
 
 #ifndef _OpenAPI_nf_load_level_information_H_
 #define _OpenAPI_nf_load_level_information_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_nf_load_level_information_s OpenAPI_nf_load_level_information_t;
 #include "nf_type.h"
 #include "nnwdaf_nf_status.h"
 #include "snssai.h"
@@ -20,11 +21,11 @@
 extern "C" {
 #endif
 
-typedef struct OpenAPI_nf_load_level_information_s OpenAPI_nf_load_level_information_t;
-typedef struct OpenAPI_nf_load_level_information_s {
+struct OpenAPI_nf_load_level_information_s {
     OpenAPI_nf_type_e nf_type;
     char *nf_instance_id;
     char *nf_set_id;
+    bool is_nf_status_null;
     struct OpenAPI_nnwdaf_nf_status_s *nf_status;
     bool is_nf_cpu_usage;
     int nf_cpu_usage;
@@ -41,12 +42,13 @@ typedef struct OpenAPI_nf_load_level_information_s {
     struct OpenAPI_snssai_s *snssai;
     bool is_confidence;
     int confidence;
-} OpenAPI_nf_load_level_information_t;
+};
 
 OpenAPI_nf_load_level_information_t *OpenAPI_nf_load_level_information_create(
     OpenAPI_nf_type_e nf_type,
     char *nf_instance_id,
     char *nf_set_id,
+    bool is_nf_status_null,
     OpenAPI_nnwdaf_nf_status_t *nf_status,
     bool is_nf_cpu_usage,
     int nf_cpu_usage,

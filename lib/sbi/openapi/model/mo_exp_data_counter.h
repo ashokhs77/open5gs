@@ -8,20 +8,20 @@
 #define _OpenAPI_mo_exp_data_counter_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_mo_exp_data_counter_s OpenAPI_mo_exp_data_counter_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_mo_exp_data_counter_s OpenAPI_mo_exp_data_counter_t;
-typedef struct OpenAPI_mo_exp_data_counter_s {
+struct OpenAPI_mo_exp_data_counter_s {
     int counter;
     char *time_stamp;
-} OpenAPI_mo_exp_data_counter_t;
+};
 
 OpenAPI_mo_exp_data_counter_t *OpenAPI_mo_exp_data_counter_create(
     int counter,
