@@ -746,7 +746,7 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
             }
         }
     } else {
-        mme_ue_t *mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+        mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
         ogs_error("Known UE ENB_UE_S1AP_ID[%d] [%p:%p]",
                 (int)*ENB_UE_S1AP_ID, enb_ue, mme_ue);
         if (mme_ue) {

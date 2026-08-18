@@ -140,7 +140,13 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
             return;
         }
         mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
-        ogs_assert(mme_ue);
+        if (!mme_ue) // No UE context found for the given session's MME_UE ID.it may have already been removed 
+        {
+            ogs_error("Session id[%d] and MME ue [%d] has been removed [%d]",
+                    sess->mme_ue_id, mme_ue_id, type);
+            return;
+        }
+        
         break;
     case OGS_GTP2_BEARER_RESOURCE_COMMAND_TYPE:
         bearer_id = OGS_POINTER_TO_UINT(data);

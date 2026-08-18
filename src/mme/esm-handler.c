@@ -332,7 +332,25 @@ int esm_handle_information_response(
                     OGS_NAS_ATTACH_TYPE_EPS_ATTACH) {
                 r = nas_eps_send_attach_accept(mme_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
+             if (r == OGS_ERROR)
+                {
+                    ogs_error("asking to create new session: no.of session available[%d], csmap [%p], IMSI [%s], attach value [%d] attach mode [%d], PDN_session_type [%d]", 
+                        mme_ue->num_of_session, mme_ue->csmap, 
+                        mme_ue->imsi_bcd, mme_ue->nas_eps.attach.value, mme_ue->network_access_mode, sess->session->session_type);
+                    
+                   if (mme_ue->num_of_session >= OGS_MAX_NUM_OF_SESS) {
+                        // stale PDN session for the given APN is being removed and decrement the num of sessions
+                        mme_session_remove_by_apn(mme_ue, rsp->access_point_name.apn);  
+                    }
+                    sess->session = mme_session_add_allow_duplicate_apn(mme_ue, rsp->access_point_name.apn, sess->session->session_type); //this function is using for adding the duplicate apn
+                    if (!sess->session) {
+                        ogs_error("Failed to add session for APN [%s]", rsp->access_point_name.apn);
+                    }
+                    ogs_info("removed all pdn's and created new pdn's :no.of session available[%d], csmap [%p], IMSI [%s], attach value [%d] attach mode [%d], PDN_session_type [%d]",
+                        mme_ue->num_of_session, mme_ue->csmap, 
+                        mme_ue->imsi_bcd, mme_ue->nas_eps.attach.value, mme_ue->network_access_mode, sess->session->session_type);
+                  // ogs_assert(r != OGS_ERROR);
+                }
             } else {
                 ogs_assert(OGS_OK ==
                     sgsap_send_location_update_request(mme_ue));

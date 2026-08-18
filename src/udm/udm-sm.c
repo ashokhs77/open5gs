@@ -323,15 +323,15 @@ void udm_state_operational(ogs_fsm_t *s, udm_event_t *e)
      * Guard against dispatching to an FSM that may have been finalized
      * by an asynchronous shutdown triggered by SIGTERM.
      *
-     * In init.câ€™s event_termination(), which can be invoked asynchronously
+     * In init.c’s event_termination(), which can be invoked asynchronously
      * when the process receives SIGTERM, we iterate over all NF instances:
      *     ogs_list_for_each(&ogs_sbi_self()->nf_instance_list, nf_instance)
      *         ogs_sbi_nf_fsm_fini(nf_instance);
-     * and call ogs_fsm_fini() on each instanceâ€™s FSM. That finalizes the FSM
+     * and call ogs_fsm_fini() on each instance’s FSM. That finalizes the FSM
      * and its state is reset to zero.
      *
-     * After event_termination(), any incoming SBI responseâ€”such as an NRF
-     * client callback arriving after deregistrationâ€”would otherwise be
+     * After event_termination(), any incoming SBI response—such as an NRF
+     * client callback arriving after deregistration—would otherwise be
      * dispatched into a dead FSM and trigger an assertion failure.
      *
      * To avoid this, we check OGS_FSM_STATE(&nf_instance->sm):

@@ -30,7 +30,8 @@ libmme_sources = files('''
     sgsap-conv.h
     sgsap-path.h
     mme-fd-path.h
-    mme-s6a-handler.h
+    mme-s6a-handler.h 
+    mme-s13-handler.h 
     nas-security.h
     nas-path.h
     emm-handler.h
@@ -66,7 +67,8 @@ libmme_sources = files('''
     sgsap-sctp.c
     sgsap-path.c
     mme-fd-path.c
-    mme-s6a-handler.c
+    mme-s6a-handler.c 
+    mme-s13-handler.c 
     nas-security.c
     nas-path.c
     emm-sm.c
@@ -103,6 +105,7 @@ libmme = static_library('mme',
                     libs1ap_dep,
                     libnas_eps_dep,
                     libdiameter_s6a_dep,
+                    libdiameter_s13_dep,
                     libgtp_dep,
                     libsbi_dep,
                     libcares_dep],
@@ -115,6 +118,7 @@ libmme_dep = declare_dependency(
                     libs1ap_dep,
                     libnas_eps_dep,
                     libdiameter_s6a_dep,
+                    libdiameter_s13_dep,
                     libsbi_dep,
                     libgtp_dep,
                     libcares_dep])
@@ -126,8 +130,8 @@ mme_sources = files('''
 
 executable('open5gs-mmed',
     sources : mme_sources,
-    c_args : '-DDEFAULT_CONFIG_FILENAME="@0@/mme.yaml"'.format(open5gs_sysconfdir),
-    include_directories : srcinc,
-    dependencies : libmme_dep,
+    c_args : ['-DDEFAULT_CONFIG_FILENAME="@0@/mme.yaml"'.format(open5gs_sysconfdir),'-DENABLE_LICENSE_CHECK'],
+    include_directories : [srcinc, incdir_license],
+    dependencies : [libmme_dep, license_lib],
     install_rpath : libdir,
     install : true)

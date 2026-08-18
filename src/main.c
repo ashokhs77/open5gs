@@ -24,6 +24,18 @@
 #include "ogs-app.h"
 #include "version.h"
 
+#ifdef ENABLE_LICENSE_CHECK
+
+#include "License_Checker.h"
+
+#define TOC_BUFFER_SIZE              30 
+#define APP_NAME_BUFFER_SIZE         10
+
+INT8 gsi8Appname[APP_NAME_BUFFER_SIZE] ="CORE";
+INT8 gsi8TOC[TOC_BUFFER_SIZE] ="Fri 2026-02-6 11:00:40 UTC";
+
+#endif
+
 static void show_version(void)
 {
     printf("Open5GS %s\n\n", OPEN5GS_VERSION);
@@ -97,6 +109,21 @@ int main(int argc, const char *const argv[])
      *
      * Keep the order of starting-up
      */
+setbuf(stdout, NULL);
+setbuf(stderr, NULL);
+    
+#ifdef ENABLE_LICENSE_CHECK
+   INT32 status = LICENSE_VOID;
+    status = checkLicense(gsi8Appname,gsi8TOC);
+    GetLicenseAPIVersionNumber();
+    printf("License Check Status: %ld \n", status);
+
+    if (status != LICENSE_VALID) {
+        printf("License Expired...!, Closing the app\n");
+        exit(1);
+    }
+#endif
+    
     int rv, i, opt;
     ogs_getopt_t options;
     struct {

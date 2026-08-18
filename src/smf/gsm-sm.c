@@ -1410,7 +1410,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
      * In step 1a/1f, upon receiving Nsmf_PDUSession_Update from V-SMF,
      * H-SMF SHALL immediately send the Update Response, then issue PFCP
      * Session Deletion. This ordering is per the standard, even for duplicate
-     * sessions, and may overlap with AMFâ€™s concurrent Create Session.
+     * sessions, and may overlap with AMF’s concurrent Create Session.
      *
      * 1a. (UE initiated release)
      * 1f. This step is the same as step 1f in clause 4.3.4.2,
@@ -1641,10 +1641,10 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     SWITCH(sbi_message->h.resource.component[2])
                     CASE(OGS_SBI_RESOURCE_NAME_MODIFY)
 /*
- * PFCP delete triggers are defined in lib/pfcp/xact.h (values 1â€“7).
+ * PFCP delete triggers are defined in lib/pfcp/xact.h (values 1–7).
  * To avoid overlap with OGS_PFCP_DELETE_TRIGGER_*, SMF states use:
- *   - UPDATE_STATE_BASE at 0x10â€“0x14
- *   - UECM_STATE_BASE   at 0x20â€“0x23
+ *   - UPDATE_STATE_BASE at 0x10–0x14
+ *   - UECM_STATE_BASE   at 0x20–0x23
  * HR flag is bit 7 (0x80).
  */
                         switch (e->h.sbi.state) {
@@ -2613,7 +2613,7 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
      * In step 1f, upon receiving Nsmf_PDUSession_Update from V-SMF, H-SMF
      * SHALL immediately send the Update Response, then issue PFCP Session
      * Deletion. This ordering is per the standard, even for duplicate
-     * sessions, and may overlap with AMFâ€™s concurrent Create Session.
+     * sessions, and may overlap with AMF’s concurrent Create Session.
      *
      * 1.  V: OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|OGS_PFCP_MODIFY_UL_ONLY|
      *        OGS_PFCP_MODIFY_DEACTIVATE

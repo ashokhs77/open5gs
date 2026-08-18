@@ -2672,6 +2672,62 @@ int mme_context_parse_config(void)
                         return OGS_ERROR;
                     }
 #endif /* MME_HAVE_CARES */
+                } else if (!strcmp(mme_key, "eir")) {
+                    ogs_yaml_iter_t eir_iter;
+                    ogs_yaml_iter_recurse(&mme_iter, &eir_iter);
+
+                    while (ogs_yaml_iter_next(&eir_iter)) {
+                        const char *eir_key = ogs_yaml_iter_key(&eir_iter);
+                        ogs_assert(eir_key);
+                        if (!strcmp(eir_key, "enabled")) {
+                            ogs_nas_eir_t *eir = &self.eir;
+                            const char *c_eir_enabled = ogs_yaml_iter_value(&eir_iter);
+
+                            if (!strcmp("True", c_eir_enabled) || 
+                                !strcmp("true", c_eir_enabled)) {
+                                ogs_info("EIR functionality has been enabled");
+                                eir->enabled = true;
+                            }
+                            else {
+                                eir->enabled = false;
+                            }
+                        } if (!strcmp(eir_key, "allowed_states")) {
+                            ogs_yaml_iter_t allowed_states_iter;
+                            ogs_yaml_iter_recurse(&eir_iter,
+                                    &allowed_states_iter);
+                            ogs_assert(ogs_yaml_iter_type(
+                                        &allowed_states_iter) !=
+                                YAML_MAPPING_NODE);
+
+                            do {
+                                const char *allowed_states_value = NULL;
+
+                                if (ogs_yaml_iter_type(&allowed_states_iter) ==
+                                        YAML_SEQUENCE_NODE) {
+                                    if (!ogs_yaml_iter_next(
+                                                &allowed_states_iter))
+                                        break;
+                                }
+
+                                allowed_states_value = ogs_yaml_iter_value(&allowed_states_iter);
+                                if (allowed_states_value) {
+                                    if (strcmp(allowed_states_value, "WHITELIST") == 0) {
+                                        self.eir.allow_whitelist = true;
+                                    } else if (strcmp(allowed_states_value, "GREYLIST") == 0) {
+                                        self.eir.allow_greylist = true;
+                                    } else if (strcmp(allowed_states_value, "BLACKLIST") == 0) {
+                                        self.eir.allow_blacklist = true;
+                                    } else {
+                                        ogs_warn("'%s' is not a valid eir allowed_states value. "
+                                                 "Valid values include: WHITELIST, GREYLIST, BLACKLIST",
+                                                 allowed_states_value);
+                                    } 
+                                }
+                            } while (
+                                ogs_yaml_iter_type(&allowed_states_iter) ==
+                                    YAML_SEQUENCE_NODE);
+                        }
+                    }
                 } else if (!strcmp(mme_key, "emergency")) {
                     ogs_yaml_iter_t emerg_iter;
                     ogs_yaml_iter_recurse(&mme_iter, &emerg_iter);
@@ -3487,7 +3543,8 @@ enb_ue_t *enb_ue_add(mme_enb_t *enb, uint32_t enb_ue_s1ap_id)
     enb_ue->enb_id = enb->id;
 
     ogs_list_add(&enb->enb_ue_list, enb_ue);
-
+    mme_ue_t  *mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id); //findout the mme_ue and get the imsi number from mme ue
+    ogs_info("IMSI [%s] and before adding eNB ue count [%d]",  MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown", num_of_enb_ue);//print the imsi number before adding the ue
     stats_add_enb_ue();
 
     return enb_ue;
@@ -3507,7 +3564,8 @@ void enb_ue_remove(enb_ue_t *enb_ue)
     ogs_timer_delete(enb_ue->t_s1_holding);
 
     ogs_pool_id_free(&enb_ue_pool, enb_ue);
-
+    mme_ue_t  *mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id); //findout the mme_ue and get the imsi number from mme ue
+    ogs_info("IMSI [%s] and before removing eNB ue count [%d]",  MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown", num_of_enb_ue); //print the imsi number before remove the ue
     stats_remove_enb_ue();
 }
 
@@ -4571,15 +4629,25 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd,
             sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
             ogs_assert(sgw_ue);
             old_sgw_ue = sgw_ue_find_by_id(old_mme_ue->sgw_ue_id);
-            ogs_assert(old_sgw_ue);
-            sgw_ue->sgw_s11_teid = old_sgw_ue->sgw_s11_teid;
-
-            mme_ue_remove(old_mme_ue);
+            if (!old_sgw_ue)
+            {
+                ogs_error("[%s] old_sgw_ue not found for sgw_ue_id=%d",
+                               mme_ue->imsi_bcd, old_mme_ue->sgw_ue_id);
+                sgw_ue->sgw_s11_teid = OGS_INVALID_POOL_ID; //storing the invalid poolid to s11_teid when old_sgw_ue is NULL 
+            } 
+            else 
+            {
+                sgw_ue->sgw_s11_teid = old_sgw_ue->sgw_s11_teid;
+            }
+           
+          mme_ue_remove(old_mme_ue);
         }
     }
 
-    /* Register new IMSI in hash.
-     * Old IMSI hash entry was already removed at the top of this function. */
+    if (mme_ue->imsi_len != 0)
+        ogs_hash_set(mme_self()->imsi_ue_hash,
+                mme_ue->imsi, mme_ue->imsi_len, NULL);
+
     ogs_hash_set(self.imsi_ue_hash, mme_ue->imsi, mme_ue->imsi_len, mme_ue);
 
     mme_ue->hssmap = mme_hssmap_find_by_imsi_bcd(mme_ue->imsi_bcd);
@@ -4981,7 +5049,40 @@ mme_sess_t *mme_sess_find_by_apn(const mme_ue_t *mme_ue, const char *apn)
 
     return NULL;
 }
+ogs_session_t *mme_session_add_allow_duplicate_apn(mme_ue_t *mme_ue, const char *apn, uint8_t session_type) { 
+//this function is using for adding the duplicate apn
+    if (mme_ue->num_of_session >= OGS_MAX_NUM_OF_SESS) { //if pdn's more than 4, we can't allow to add the pdn's
+        ogs_error("Cannot add more PDNs for UE[%s], max [%d] reached",
+                  mme_ue->imsi_bcd, OGS_MAX_NUM_OF_SESS);
+        return NULL;
+    }
 
+    ogs_session_t *new_session = &mme_ue->session[mme_ue->num_of_session]; //creating new session
+    memset(new_session, 0, sizeof(*new_session));
+
+    new_session->name = ogs_strdup(apn);
+    if (!new_session->name) return NULL;
+    new_session->context_identifier = mme_ue->num_of_session + 1; //adding new pdn session for the same apn 
+    new_session->session_type = session_type;  //copying the session type like ipv4 and ipv6 etc
+    mme_ue->num_of_session++;
+    return new_session;
+}
+void mme_session_remove_by_apn(mme_ue_t *mme_ue, const char *apn) {
+    //Removes an existing PDN session from an MME UE context that matches the specified APN
+    int i;
+    for (i = 0; i < mme_ue->num_of_session; i++) {
+        if (mme_ue->session[i].name &&
+            ogs_strcasecmp(mme_ue->session[i].name, apn) == 0) {
+            ogs_info("Removing stale PDN session for APN: %s", apn); 
+            if (mme_ue->session[i].name)
+                ogs_free(mme_ue->session[i].name);
+            memmove(&mme_ue->session[i], &mme_ue->session[i + 1],
+                    sizeof(ogs_session_t) * (OGS_MAX_NUM_OF_SESS - i - 1));//Shifts the remaining sessions up to remove the gap
+            mme_ue->num_of_session--; //Decrements the total number of active sessions
+            return;
+        }
+    }
+}
 mme_sess_t *mme_sess_find_by_id(ogs_pool_id_t id)
 {
     return ogs_pool_find_by_id(&mme_sess_pool, id);

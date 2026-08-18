@@ -1053,15 +1053,12 @@ void mme_s11_handle_create_bearer_request(
             mme_ue->imsi_bcd, mme_ue->ebi_bitmap);
     bearer = mme_bearer_add(sess);
     if (!bearer) {
-        /* mme_ebi_alloc() has already emitted the full [EBI-TRACK]
-         * ALLOC-FAIL dump.  Keep the assert so the crash still stops
-         * the process with the dump captured right above it. */
         ogs_error("[EBI-TRACK] CREATE-BEARER-REQUEST FAILED: "
-                "EBI pool exhausted, aborting (see dump above) "
+                "EBI pool exhausted, returning failure (see dump above) "
                 "IMSI[%s] SGW_S11_TEID[%u]",
                 mme_ue->imsi_bcd, sgw_ue->sgw_s11_teid);
+        return;
     }
-    ogs_assert(bearer);
 
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
             mme_ue->mme_s11_teid, sgw_ue->sgw_s11_teid);

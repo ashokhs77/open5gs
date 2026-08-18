@@ -45,7 +45,7 @@ bool smf_namf_comm_handle_n1_n2_message_transfer(
  * the session is active on UE, RAN, and SMF before applying QoS updates.
  *
  * Home-Routed Roaming: trigger PDU Session Modification at step 13
- * immediately after H-SMFâ€™s CreateSMContext response and H-UPF N4 setup
+ * immediately after H-SMF’s CreateSMContext response and H-UPF N4 setup
  * to apply QoS updates without waiting for V-SMF or RAN setup.
  */
             smf_qos_flow_binding(sess);
