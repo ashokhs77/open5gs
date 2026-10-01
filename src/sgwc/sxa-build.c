@@ -233,6 +233,24 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                         ogs_assert_if_reached();
                 }
 
+                /*
+                 * Do NOT reference a tunnel the SGW-U never installed. If the
+                 * UE never answers a Create Bearer Request the S1-U PDR/FAR is
+                 * never created, and referencing it gives PFCP/GTP cause 69 ->
+                 * the MME deletes every PDN the subscriber has. local_teid is
+                 * written only from a Created PDR IE, so zero means unconfirmed.
+                 * CREATE is exempt (it sets local_teid), REMOVE so a half-built
+                 * tunnel can still be torn down. See [[halfbuilt-bearer-causes-69]].
+                 */
+                if (!(modify_flags &
+                        (OGS_PFCP_MODIFY_CREATE|OGS_PFCP_MODIFY_REMOVE)) &&
+                    tunnel->local_teid == 0) {
+                    ogs_warn("SGW-U never confirmed this tunnel "
+                            "(interface_type=%d) - excluding it from the "
+                            "session modification", tunnel->interface_type);
+                    continue;
+                }
+
                 if (modify_flags & OGS_PFCP_MODIFY_DEACTIVATE) {
 
                     far = tunnel->far;

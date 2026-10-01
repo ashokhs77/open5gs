@@ -1575,19 +1575,36 @@ void sgwc_sxa_handle_session_report_request(
                 }
             } else if (far->dst_if == OGS_PFCP_INTERFACE_CORE) {
                 if (sgwc_default_bearer_in_sess(sess) == bearer) {
-                    ogs_error("[%s] Error Indication(Default Bearer) from SMF",
-                                sgwc_ue->imsi_bcd);
-                    ogs_assert(OGS_OK ==
-                        sgwc_pfcp_send_session_deletion_request(
-                            sess, OGS_INVALID_POOL_ID, NULL));
-                } else {
-                    ogs_error("[%s] Error Indication(Dedicated Bearer) "
-                            "from SMF", sgwc_ue->imsi_bcd);
+                    /*
+                     * DO NOT delete the session here: a core-side Error
+                     * Indication for the DEFAULT bearer is not proof the PDN is
+                     * gone, and a spurious one used to detach the UE and drop
+                     * every call it had. In EPC the SMF owns the session
+                     * lifecycle. Worst case a stale SGW-C session lingers until
+                     * the SMF cleans it up. The ACCESS branch above is
+                     * deliberately unchanged. Does NOT fix the underlying
+                     * FAR-ID desync. See [[default-bearer-erri-deletes-pdn]].
+                     */
+                    ogs_warn("[%s] Error Indication(Default Bearer) from SMF "
+                            "- keeping session, SMF owns its lifecycle",
+                            sgwc_ue->imsi_bcd);
                     ogs_info("    bearer[EBI=%d]", bearer->ebi);
-                    ogs_assert(OGS_OK ==
-                        sgwc_pfcp_send_bearer_modification_request(
-                            bearer, OGS_INVALID_POOL_ID, NULL,
-                            OGS_PFCP_MODIFY_REMOVE));
+                } else {
+                    /*
+                     * DO NOT remove the bearer here. This Error Indication is
+                     * transient (it follows every TFT replacement), and removing
+                     * the bearer makes the SMF's later Delete Bearer Request
+                     * unserviceable -- it is answered ContextNotFound locally,
+                     * never reaches the MME, and the E-RAB leaks until the eNB
+                     * cannot schedule the UE. Gx owns a dedicated bearer's
+                     * lifecycle, so leave the decision to the SMF. The ACCESS
+                     * branch above is deliberately unchanged.
+                     * See [[sgwc-corrupts-update-bearer-rsp]].
+                     */
+                    ogs_warn("[%s] Error Indication(Dedicated Bearer) from SMF "
+                            "- keeping bearer, SMF owns its lifecycle",
+                            sgwc_ue->imsi_bcd);
+                    ogs_info("    bearer[EBI=%d]", bearer->ebi);
                 }
             } else {
                 ogs_error("Error Indication Ignored for Indirect Tunnel");

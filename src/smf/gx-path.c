@@ -1080,12 +1080,21 @@ static void smf_gx_cca_cb(void *data, struct msg **msg)
                             break;
                         }
 
+                        /*
+                         * Re-installing a rule REPLACES its filters (see
+                         * smf_bearer_binding()), so the post-install count is
+                         * exactly num_of_flow. Adding the bearer's current count
+                         * on top refused every rule after three re-authorizations
+                         * with 5142. See [[open5gs-tft-append-only]].
+                         */
                         num_of_flow = pcc_rule->num_of_flow;
 
                         bearer = smf_bearer_find_by_pcc_rule_name(
                                 sess, pcc_rule->name);
                         if (bearer)
-                            num_of_flow += ogs_list_count(&bearer->pf_list);
+                            ogs_debug("PCC rule [%s]: replacing %d installed "
+                                    "packet filter(s)", pcc_rule->name,
+                                    ogs_list_count(&bearer->pf_list));
 
                         if (num_of_flow < OGS_MAX_NUM_OF_FLOW_IN_BEARER) {
                             pcc_rule->type = OGS_PCC_RULE_TYPE_INSTALL;
@@ -1328,12 +1337,21 @@ static int smf_gx_rar_cb( struct msg **msg, struct avp *avp,
                             goto out;
                         }
 
+                        /*
+                         * Re-installing a rule REPLACES its filters (see
+                         * smf_bearer_binding()), so the post-install count is
+                         * exactly num_of_flow. Adding the bearer's current count
+                         * on top refused every rule after three re-authorizations
+                         * with 5142. See [[open5gs-tft-append-only]].
+                         */
                         num_of_flow = pcc_rule->num_of_flow;
 
                         bearer = smf_bearer_find_by_pcc_rule_name(
                                 sess, pcc_rule->name);
                         if (bearer)
-                            num_of_flow += ogs_list_count(&bearer->pf_list);
+                            ogs_debug("PCC rule [%s]: replacing %d installed "
+                                    "packet filter(s)", pcc_rule->name,
+                                    ogs_list_count(&bearer->pf_list));
 
                         if (num_of_flow < OGS_MAX_NUM_OF_FLOW_IN_BEARER) {
                             pcc_rule->type = OGS_PCC_RULE_TYPE_INSTALL;

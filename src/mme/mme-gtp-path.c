@@ -569,6 +569,18 @@ int mme_gtp_send_delete_bearer_response(
         ogs_error("GTP transaction(DELETE) has already been removed");
         return OGS_OK;
     }
+    /*
+     * Already answered: paging failed and mme_send_after_paging() replied
+     * "Unable to page UE", then the UE came back and the Initial Context Setup
+     * retry (s1ap-handler.c) deactivated the bearer again. A second response on
+     * the same xact fails in ogs_gtp_xact_update_tx() ("invalid step[2]") and the
+     * caller's ogs_assert aborts the MME. The bearer is still removed locally.
+     */
+    if (xact->step != 1) {
+        ogs_warn("GTP transaction(DELETE) already answered [EBI:%d step:%d]",
+                bearer->ebi, xact->step);
+        return OGS_OK;
+    }
 
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
