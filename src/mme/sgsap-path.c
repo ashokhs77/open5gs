@@ -270,6 +270,42 @@ int sgsap_send_reset_ack(mme_vlr_t *vlr)
     return rv;
 }
 
+/*
+ * MO SMS (3GPP TS 24.011): if the TP-DA has at least 10 digits after a leading
+ * "91" (i.e. 12 or more digits in total), strip the "91" in place.
+ *
+ * Container: [0]=PD(9) [1]=CP-DATA(1) [2]=CP len [3]=RP-MTI(0) [4]=RP-MR
+ *   [5]=RP-OA len(0) [6]=RP-DA len +RP-DA, then RP-UD len, then TPDU:
+ *   [0]=first octet [1]=TP-MR [2]=TP-DA digits [3]=TOA [4..]=digits (BCD)
+ * Removing the first digit byte (0x19 = "9","1") drops exactly two digits.
+ */
+
+static void sgsap_strip_91_from_mo_sms(ogs_nas_eps_message_container_t *c)
+{
+    uint8_t *b = c->buffer;
+    uint32_t l = c->length, rp_ud, tp;
+
+    if (l < 8 || (b[0] & 0x0f) != 0x09 || b[1] != 0x01 ||
+        b[2] != l - 3 || b[3] != 0x00 || b[5] != 0x00) return;
+
+    rp_ud = 7 + (uint32_t)b[6];
+    if (rp_ud >= l || b[rp_ud] != l - rp_ud - 1) return;
+
+    tp = rp_ud + 1;
+    if (l < tp + 5 || (b[tp] & 0x03) != 0x01) return;          /* SMS-SUBMIT */
+    if (b[tp + 2] < 12 || b[tp + 4] != 0x19) return;           /* >=12 digits, "91" */
+    if (l < tp + 4 + (uint32_t)(b[tp + 2] + 1) / 2) return;    /* digits fit */
+
+    memmove(&b[tp + 4], &b[tp + 5], l - (tp + 5));
+    b[tp + 2] -= 2;
+    b[tp + 3] = 0x81;               /* unknown TON, ISDN NPI */
+    b[rp_ud] -= 1;
+    b[2] -= 1;
+    c->length = (uint8_t)(l - 1);
+
+    ogs_info("[SGSAP] MO SMS: removed 91 from TP-DA");
+}
+
 int sgsap_send_uplink_unitdata(mme_ue_t *mme_ue,
         ogs_nas_eps_message_container_t *nas_message_container)
 {
@@ -277,6 +313,8 @@ int sgsap_send_uplink_unitdata(mme_ue_t *mme_ue,
     ogs_pkbuf_t *pkbuf = NULL;
     ogs_assert(mme_ue);
     ogs_assert(nas_message_container);
+	
+	sgsap_strip_91_from_mo_sms(nas_message_container);
 
     ogs_debug("[SGSAP] UPLINK-UNITDATA");
     ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
