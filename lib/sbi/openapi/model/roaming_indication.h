@@ -1,14 +1,14 @@
 /*
  * roaming_indication.h
  *
- * 
+ * Contains the indication on roaming
  */
 
 #ifndef _OpenAPI_roaming_indication_H_
 #define _OpenAPI_roaming_indication_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

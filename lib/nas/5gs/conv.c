@@ -57,7 +57,8 @@ void ogs_nas_5gs_imsi_to_bcd(
     scheme_output_bcd = ogs_calloc(1, scheme_output_size*2+1);
     ogs_assert(scheme_output_bcd);
 
-    ogs_buffer_to_bcd(scheme_output, scheme_output_size, scheme_output_bcd);
+    ogs_buffer_to_bcd(scheme_output, scheme_output_size,
+            scheme_output_bcd, scheme_output_size*2+1);
     p = ogs_slprintf(p, last, "%s", scheme_output_bcd);
 
     ogs_free(scheme_output_bcd);
@@ -76,6 +77,10 @@ char *ogs_nas_5gs_suci_from_mobile_identity(
     char *scheme_output_string_or_bcd = NULL;
 
     ogs_assert(mobile_identity);
+    ogs_assert(mobile_identity->buffer);
+
+    ogs_assert(mobile_identity->length >=
+            (OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE + 1));
 
     mobile_identity_suci =
         (ogs_nas_5gs_mobile_identity_suci_t *)mobile_identity->buffer;
@@ -154,14 +159,9 @@ char *ogs_nas_5gs_suci_from_mobile_identity(
     scheme_output =
         (uint8_t *)mobile_identity->buffer +
         OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE;
-    if (mobile_identity->length < OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE) {
-        ogs_error("The length of Mobile Identity(%d) is less then the min(%d)",
-            mobile_identity->length, OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE);
-        ogs_free(suci);
-        return NULL;
-    }
     scheme_output_size =
         mobile_identity->length - OGS_NAS_5GS_MOBILE_IDENTITY_SUCI_MIN_SIZE;
+    ogs_assert(scheme_output_size);
     scheme_output_string_or_bcd = ogs_calloc(1, scheme_output_size*2+1);
     ogs_assert(scheme_output_string_or_bcd);
 
@@ -171,7 +171,7 @@ char *ogs_nas_5gs_suci_from_mobile_identity(
                 scheme_output_string_or_bcd, scheme_output_size*2+1);
     } else {
         ogs_buffer_to_bcd(scheme_output, scheme_output_size,
-                scheme_output_string_or_bcd);
+                scheme_output_string_or_bcd, scheme_output_size*2+1);
     }
 
     suci = ogs_mstrcatf(suci, "%s-%d-%d-%s",

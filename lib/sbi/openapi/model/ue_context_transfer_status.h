@@ -1,14 +1,14 @@
 /*
  * ue_context_transfer_status.h
  *
- * 
+ * Describes the status of an individual ueContext resource in UE Context Transfer procedures
  */
 
 #ifndef _OpenAPI_ue_context_transfer_status_H_
 #define _OpenAPI_ue_context_transfer_status_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

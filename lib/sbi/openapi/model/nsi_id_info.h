@@ -8,21 +8,21 @@
 #define _OpenAPI_nsi_id_info_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_nsi_id_info_s OpenAPI_nsi_id_info_t;
 #include "snssai.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_nsi_id_info_s OpenAPI_nsi_id_info_t;
-typedef struct OpenAPI_nsi_id_info_s {
+struct OpenAPI_nsi_id_info_s {
     struct OpenAPI_snssai_s *snssai;
     OpenAPI_list_t *nsi_ids;
-} OpenAPI_nsi_id_info_t;
+};
 
 OpenAPI_nsi_id_info_t *OpenAPI_nsi_id_info_create(
     OpenAPI_snssai_t *snssai,

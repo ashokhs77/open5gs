@@ -8,18 +8,18 @@
 #define _OpenAPI_qos_characteristics_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_qos_characteristics_s OpenAPI_qos_characteristics_t;
 #include "qos_resource_type.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_qos_characteristics_s OpenAPI_qos_characteristics_t;
-typedef struct OpenAPI_qos_characteristics_s {
+struct OpenAPI_qos_characteristics_s {
     int _5qi;
     OpenAPI_qos_resource_type_e resource_type;
     int priority_level;
@@ -31,7 +31,7 @@ typedef struct OpenAPI_qos_characteristics_s {
     int max_data_burst_vol;
     bool is_ext_max_data_burst_vol;
     int ext_max_data_burst_vol;
-} OpenAPI_qos_characteristics_t;
+};
 
 OpenAPI_qos_characteristics_t *OpenAPI_qos_characteristics_create(
     int _5qi,

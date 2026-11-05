@@ -28,6 +28,7 @@
 #include "nudm-handler.h"
 #include "npcf-handler.h"
 #include "namf-handler.h"
+#include "n5geir-handler.h"
 #include "sbi-path.h"
 #include "amf-sm.h"
 #include "namf-build.h"
@@ -35,22 +36,22 @@
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __gmm_log_domain
 
-#define AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s) do {                  \
-    if ((amf_ue)->can_restore_context) {                                \
-        /* Restore context if allowed */                                \
-        amf_ue_restore_memento((amf_ue), &((amf_ue)->memento));         \
-        (amf_ue)->security_context_available = 1;                       \
-        (amf_ue)->mac_failed = 0;                                       \
-        if (!OGS_FSM_CHECK(&amf_ue->sm, gmm_state_registered))          \
-            OGS_FSM_TRAN((s), &gmm_state_registered);                   \
+#define AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s) do {                   \
+    CLEAR_AMF_UE_TIMER((amf_ue)->t3560);                                 \
+    (amf_ue)->registration_session_release_after_authentication = false; \
+    if ((amf_ue)->can_restore_context) {                                 \
+        amf_ue_restore_memento((amf_ue), &((amf_ue)->memento));            \
+        (amf_ue)->security_context_available = 1;                        \
+        (amf_ue)->mac_failed = 0;                                        \
+        if (!OGS_FSM_CHECK((s), gmm_state_registered))                   \
+            OGS_FSM_TRAN((s), &gmm_state_registered);                    \
         ogs_warn("[%s] Failure in transaction; restoring context and "  \
-                 "transitioning to REGISTERED.", (amf_ue)->supi);       \
-    } else {                                                            \
-        /* Transition to exception state if not allowed */              \
-        OGS_FSM_TRAN((s), &gmm_state_exception);                        \
+                  "transitioning to REGISTERED.", (amf_ue)->supi);      \
+    } else {                                                           \
+        OGS_FSM_TRAN((s), &gmm_state_exception);                         \
         ogs_warn("[%s] Failure in transaction; no context "             \
-                 "restoration.", (amf_ue)->supi);                       \
-    }                                                                   \
+                  "restoration.", (amf_ue)->supi);                      \
+    }                                                                  \
 } while (0)
 
 typedef enum {
@@ -60,6 +61,8 @@ typedef enum {
 
 static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
         gmm_common_state_e state);
+
+static void gmm_continue_registration(ogs_fsm_t *s, amf_ue_t *amf_ue);
 
 void gmm_state_initial(ogs_fsm_t *s, amf_event_t *e)
 {
@@ -87,6 +90,8 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
     int r, state = 0, xact_count;
 
     amf_nsmf_pdusession_sm_context_param_t param;
+
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -143,6 +148,15 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
         OGS_ASN_CLEAR_DATA(&amf_ue->ueRadioCapability);
         break;
     case OGS_FSM_EXIT_SIG:
+        /*
+         * The UE context survives a de-registration and is found again by
+         * 5G-S-TMSI on the next attach, so the handover counters have to be
+         * cleared by hand here. Leaving them would report handovers from a
+         * previous registration against the current one.
+         */
+        amf_ue->ho_attempted = 0;
+        amf_ue->ho_completed = 0;
+        amf_ue->ho_rejected = 0;
         break;
 
     case AMF_EVENT_5GMM_MESSAGE:
@@ -240,14 +254,14 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
 
             if (UDM_SDM_SUBSCRIBED(amf_ue)) {
                 r = amf_ue_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NUDM_SDM, NULL,
+                        OpenAPI_service_name_nudm_sdm, NULL,
                         amf_nudm_sdm_build_subscription_delete,
                         amf_ue, state, NULL);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
             } else if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                 r = amf_ue_sbi_discover_and_send(
-                    OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL, NULL,
+                    OpenAPI_service_name_npcf_am_policy_control, NULL,
                     amf_npcf_am_policy_control_build_delete,
                     amf_ue, state, NULL);
                 ogs_expect(r == OGS_OK);
@@ -268,8 +282,10 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
 
         xact_count = amf_sess_xact_count(amf_ue);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NAUSF_AUTH)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nausf_auth:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_AUTHENTICATIONS)
 
@@ -352,7 +368,7 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
 
                         if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                             r = amf_ue_sbi_discover_and_send(
-                                    OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
+                                    OpenAPI_service_name_npcf_am_policy_control,
                                     NULL,
                                     amf_npcf_am_policy_control_build_delete,
                                     amf_ue, state, NULL);
@@ -381,7 +397,7 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
 
                             if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                                 r = amf_ue_sbi_discover_and_send(
-                                        OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
+                                        OpenAPI_service_name_npcf_am_policy_control,
                                         NULL,
                                         amf_npcf_am_policy_control_build_delete,
                                         amf_ue, state, NULL);
@@ -411,7 +427,21 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
+        case OpenAPI_service_name_nudm_sdm:
+            /*
+             * A combined SDM response (dataset-names) has no resource
+             * component[1] and is only handled in
+             * gmm_state_initial_context_setup(). Arriving here means the
+             * UE state has changed since the request was sent; ignore it
+             * instead of asserting in the SWITCH DEFAULT below.
+             */
+            if (!sbi_message->h.resource.component[1]) {
+                ogs_warn("[%s] Ignore late dataset-names response "
+                        "[%d] in (%s)",
+                        amf_ue->supi, sbi_message->res_status,
+                        sbi_message->h.method);
+                break;
+            }
             if ((sbi_message->res_status != OGS_SBI_HTTP_STATUS_OK) &&
                 (sbi_message->res_status != OGS_SBI_HTTP_STATUS_CREATED) &&
                 (sbi_message->res_status != OGS_SBI_HTTP_STATUS_NO_CONTENT)) {
@@ -492,7 +522,7 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                         UDM_SDM_CLEAR(amf_ue);
 
                         r = amf_ue_sbi_discover_and_send(
-                                OGS_SBI_SERVICE_TYPE_NUDM_UECM, NULL,
+                                OpenAPI_service_name_nudm_uecm, NULL,
                                 amf_nudm_uecm_build_registration_delete,
                                 amf_ue, state, NULL);
                         ogs_expect(r == OGS_OK);
@@ -522,7 +552,7 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_UECM)
+        case OpenAPI_service_name_nudm_uecm:
             if (sbi_message->res_status != OGS_SBI_HTTP_STATUS_CREATED &&
                 sbi_message->res_status != OGS_SBI_HTTP_STATUS_NO_CONTENT &&
                 sbi_message->res_status != OGS_SBI_HTTP_STATUS_OK) {
@@ -594,14 +624,14 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                             state == AMF_UE_INITIATED_DE_REGISTERED) {
                             if (CHECK_5G_AKA_CONFIRMATION(amf_ue)) {
                                 r = amf_ue_sbi_discover_and_send(
-                                    OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
+                                    OpenAPI_service_name_nausf_auth, NULL,
                                     amf_nausf_auth_build_authenticate_delete,
                                     amf_ue, state, NULL);
                                 ogs_expect(r == OGS_OK);
                                 ogs_assert(r != OGS_ERROR);
                             } else if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                                 r = amf_ue_sbi_discover_and_send(
-                                        OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
+                                        OpenAPI_service_name_npcf_am_policy_control,
                                         NULL,
                                         amf_npcf_am_policy_control_build_delete,
                                         amf_ue, state, NULL);
@@ -618,7 +648,7 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                                 AMF_NETWORK_INITIATED_EXPLICIT_DE_REGISTERED) {
                             if (CHECK_5G_AKA_CONFIRMATION(amf_ue)) {
                                 r = amf_ue_sbi_discover_and_send(
-                                        OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
+                                        OpenAPI_service_name_nausf_auth, NULL,
                                         amf_nausf_auth_build_authenticate_delete,
                                         amf_ue, state, NULL);
                                 ogs_expect(r == OGS_OK);
@@ -636,7 +666,7 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
 
                                     if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                                         r = amf_ue_sbi_discover_and_send(
-                                                OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
+                                                OpenAPI_service_name_npcf_am_policy_control,
                                                 NULL,
                                                 amf_npcf_am_policy_control_build_delete,
                                                 amf_ue, state, NULL);
@@ -670,7 +700,7 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_AM_POLICY_CONTROL)
+        case OpenAPI_service_name_npcf_am_policy_control:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_POLICIES)
                 SWITCH(sbi_message->h.method)
@@ -782,7 +812,7 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 SWITCH(sbi_message->h.resource.component[2])
@@ -830,7 +860,7 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                     if (!AMF_SESSION_RELEASE_PENDING(amf_ue) &&
                         amf_sess_xact_count(amf_ue) == xact_count) {
                         r = amf_ue_sbi_discover_and_send(
-                                OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
+                                OpenAPI_service_name_nausf_auth, NULL,
                                 amf_nausf_auth_build_authenticate,
                                 amf_ue, 0, NULL);
                         ogs_expect(r == OGS_OK);
@@ -854,10 +884,10 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid service name [%s]", sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
         break;
 
     default:
@@ -875,6 +905,8 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
     ogs_sbi_message_t *sbi_message = NULL;
 
     amf_nsmf_pdusession_sm_context_param_t param;
+
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -1057,14 +1089,14 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
 
             if (UDM_SDM_SUBSCRIBED(amf_ue)) {
                 r = amf_ue_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NUDM_SDM, NULL,
+                        OpenAPI_service_name_nudm_sdm, NULL,
                         amf_nudm_sdm_build_subscription_delete,
                         amf_ue, state, NULL);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
             } else if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                 r = amf_ue_sbi_discover_and_send(
-                    OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL, NULL,
+                    OpenAPI_service_name_npcf_am_policy_control, NULL,
                     amf_npcf_am_policy_control_build_delete,
                     amf_ue, state, NULL);
                 ogs_expect(r == OGS_OK);
@@ -1085,8 +1117,10 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
 
         xact_count = amf_sess_xact_count(amf_ue);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NAUSF_AUTH)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nausf_auth:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_AUTHENTICATIONS)
                 if (sbi_message->res_status != OGS_SBI_HTTP_STATUS_CREATED &&
@@ -1168,7 +1202,7 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
 
                         if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                             r = amf_ue_sbi_discover_and_send(
-                                    OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
+                                    OpenAPI_service_name_npcf_am_policy_control,
                                     NULL,
                                     amf_npcf_am_policy_control_build_delete,
                                     amf_ue, state, NULL);
@@ -1197,7 +1231,7 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
 
                             if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                                 r = amf_ue_sbi_discover_and_send(
-                                        OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
+                                        OpenAPI_service_name_npcf_am_policy_control,
                                         NULL,
                                         amf_npcf_am_policy_control_build_delete,
                                         amf_ue, state, NULL);
@@ -1227,7 +1261,21 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
+        case OpenAPI_service_name_nudm_sdm:
+            /*
+             * A combined SDM response (dataset-names) has no resource
+             * component[1] and is only handled in
+             * gmm_state_initial_context_setup(). Arriving here means the
+             * UE state has changed since the request was sent; ignore it
+             * instead of asserting in the SWITCH DEFAULT below.
+             */
+            if (!sbi_message->h.resource.component[1]) {
+                ogs_warn("[%s] Ignore late dataset-names response "
+                        "[%d] in (%s)",
+                        amf_ue->supi, sbi_message->res_status,
+                        sbi_message->h.method);
+                break;
+            }
             if ((sbi_message->res_status != OGS_SBI_HTTP_STATUS_OK) &&
                 (sbi_message->res_status != OGS_SBI_HTTP_STATUS_CREATED) &&
                 (sbi_message->res_status != OGS_SBI_HTTP_STATUS_NO_CONTENT)) {
@@ -1285,7 +1333,7 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                         UDM_SDM_CLEAR(amf_ue);
 
                         r = amf_ue_sbi_discover_and_send(
-                                OGS_SBI_SERVICE_TYPE_NUDM_UECM, NULL,
+                                OpenAPI_service_name_nudm_uecm, NULL,
                                 amf_nudm_uecm_build_registration_delete,
                                 amf_ue, state, NULL);
                         ogs_expect(r == OGS_OK);
@@ -1337,7 +1385,7 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_UECM)
+        case OpenAPI_service_name_nudm_uecm:
             if (sbi_message->res_status != OGS_SBI_HTTP_STATUS_CREATED &&
                 sbi_message->res_status != OGS_SBI_HTTP_STATUS_NO_CONTENT &&
                 sbi_message->res_status != OGS_SBI_HTTP_STATUS_OK) {
@@ -1389,7 +1437,7 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
 
                             if (CHECK_5G_AKA_CONFIRMATION(amf_ue)) {
                                 r = amf_ue_sbi_discover_and_send(
-                                        OGS_SBI_SERVICE_TYPE_NAUSF_AUTH,
+                                        OpenAPI_service_name_nausf_auth,
                                         NULL,
                                         amf_nausf_auth_build_authenticate_delete,
                                         amf_ue, state, NULL);
@@ -1409,7 +1457,7 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
 
                                     if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                                         r = amf_ue_sbi_discover_and_send(
-                                                OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
+                                                OpenAPI_service_name_npcf_am_policy_control,
                                                 NULL,
                                                 amf_npcf_am_policy_control_build_delete,
                                                 amf_ue, state, NULL);
@@ -1443,7 +1491,7 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_AM_POLICY_CONTROL)
+        case OpenAPI_service_name_npcf_am_policy_control:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_POLICIES)
                 SWITCH(sbi_message->h.method)
@@ -1525,7 +1573,7 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 SWITCH(sbi_message->h.resource.component[2])
@@ -1575,7 +1623,7 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                     if (!AMF_SESSION_RELEASE_PENDING(amf_ue) &&
                         amf_sess_xact_count(amf_ue) == xact_count) {
                         r = amf_ue_sbi_discover_and_send(
-                                OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
+                                OpenAPI_service_name_nausf_auth, NULL,
                                 amf_nausf_auth_build_authenticate,
                                 amf_ue, 0, NULL);
                         ogs_expect(r == OGS_OK);
@@ -1599,10 +1647,10 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid service name [%s]", sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
         break;
 
     default:
@@ -1621,6 +1669,7 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
     amf_sess_t *sess = NULL;
     ogs_nas_5gs_message_t *nas_message = NULL;
     ogs_nas_security_header_type_t h;
+    ogs_nas_de_registration_type_t *de_registration_type = NULL;
 
     amf_nsmf_pdusession_sm_context_param_t param;
 
@@ -1667,6 +1716,7 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
 
         switch (nas_message->gmm.h.message_type) {
         case OGS_NAS_5GS_REGISTRATION_REQUEST:
+            amf_ue->registration_session_release_after_authentication = false;
             ogs_info("Registration request");
             gmm_cause = gmm_handle_registration_request(
                     amf_ue, h, e->ngap.code,
@@ -1725,7 +1775,7 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                 ogs_sbi_discovery_option_set_guami(discovery_option, &guami);
 
                 r = amf_ue_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NAMF_COMM, discovery_option,
+                        OpenAPI_service_name_namf_comm, discovery_option,
                         amf_namf_comm_build_ue_context_transfer,
                         amf_ue, state, nas_message);
                 ogs_expect(r == OGS_OK);
@@ -1742,6 +1792,7 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
             }
 
             if (h.integrity_protected && SECURITY_CONTEXT_IS_VALID(amf_ue)) {
+                amf_ue->can_restore_context = false;
 
                 /*
                  * If the OLD RAN_UE is being maintained in AMF-UE Context,
@@ -1778,7 +1829,7 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
 
                     if (!UDM_SDM_SUBSCRIBED(amf_ue)) {
                         r = amf_ue_sbi_discover_and_send(
-                                OGS_SBI_SERVICE_TYPE_NUDM_UECM, NULL,
+                                OpenAPI_service_name_nudm_uecm, NULL,
                                 amf_nudm_uecm_build_registration,
                                 amf_ue, 0, NULL);
                         ogs_expect(r == OGS_OK);
@@ -1787,7 +1838,7 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                         break;
                     } else if (!PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                         r = amf_ue_sbi_discover_and_send(
-                                OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
+                                OpenAPI_service_name_npcf_am_policy_control,
                                 NULL,
                                 amf_npcf_am_policy_control_build_create,
                                 amf_ue, 0, NULL);
@@ -1809,23 +1860,13 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                     OGS_FSM_TRAN(s, &gmm_state_registered);
 
             } else {
-                memset(&param, 0, sizeof(param));
-                param.ue_location = true;
-                param.ue_timezone = true;
-
-                amf_sbi_send_release_all_sessions(
-                        ran_ue, amf_ue,
-                        AMF_RELEASE_SM_CONTEXT_NO_STATE, &param);
-
-                if (!AMF_SESSION_RELEASE_PENDING(amf_ue) &&
-                    amf_sess_xact_count(amf_ue) == xact_count) {
-                    r = amf_ue_sbi_discover_and_send(
-                            OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
-                            amf_nausf_auth_build_authenticate,
-                            amf_ue, 0, NULL);
-                    ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
-                }
+                amf_ue->registration_session_release_after_authentication = true;
+                r = amf_ue_sbi_discover_and_send(
+                        OpenAPI_service_name_nausf_auth, NULL,
+                        amf_nausf_auth_build_authenticate,
+                        amf_ue, 0, NULL);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
 
                 OGS_FSM_TRAN(s, &gmm_state_authentication);
             }
@@ -1944,13 +1985,26 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
             param.ue_location = true;
             param.ue_timezone = true;
 
+            /*
+             * Identity handling may have adopted the old UE's sessions and
+             * their pending SBI transactions after xact_count was saved.
+             * For example, a saved count of 0 can become 2 through adoption.
+             * If no SM context remains, release-all sends no new request,
+             * yet comparing 2 against 0 would skip the AUSF request and
+             * enter gmm_state_authentication without starting authentication.
+             *
+             * Refresh the baseline after adoption and before release-all.
+             * The comparison then detects newly sent requests, while
+             * AMF_SESSION_RELEASE_PENDING() covers already pending releases.
+             */
+            xact_count = amf_sess_xact_count(amf_ue);
             amf_sbi_send_release_all_sessions(
                     ran_ue, amf_ue, AMF_RELEASE_SM_CONTEXT_NO_STATE, &param);
 
             if (!AMF_SESSION_RELEASE_PENDING(amf_ue) &&
                 amf_sess_xact_count(amf_ue) == xact_count) {
                 r = amf_ue_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
+                        OpenAPI_service_name_nausf_auth, NULL,
                         amf_nausf_auth_build_authenticate,
                         amf_ue, 0, NULL);
                 ogs_expect(r == OGS_OK);
@@ -1968,7 +2022,11 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
         case OGS_NAS_5GS_DEREGISTRATION_REQUEST_FROM_UE:
             ogs_info("[%s] Deregistration request", amf_ue->supi);
 
-            if (!h.integrity_protected || !SECURITY_CONTEXT_IS_VALID(amf_ue)) {
+            de_registration_type = &nas_message->gmm.
+                deregistration_request_from_ue.de_registration_type;
+            if (!h.integrity_protected || !SECURITY_CONTEXT_IS_VALID(amf_ue) ||
+                !gmm_check_ngksi(amf_ue, de_registration_type->tsc,
+                    de_registration_type->ksi)) {
                 ogs_error("No Security Context");
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
@@ -2002,7 +2060,7 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
             break;
 
         case OGS_NAS_5GS_CONFIGURATION_UPDATE_COMPLETE:
-            ogs_debug("[%s] Configuration update complete", amf_ue->supi);
+            ogs_info("[%s] Configuration update complete", amf_ue->supi);
 
             amf_metrics_inst_global_inc(AMF_METR_GLOB_CTR_MM_CONF_UPDATE_SUCC);
 
@@ -2074,12 +2132,15 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
 
     ogs_nas_5gs_message_t *nas_message = NULL;
     ogs_nas_security_header_type_t h;
+    ogs_nas_de_registration_type_t *de_registration_type = NULL;
 
     ogs_nas_5gs_authentication_failure_t *authentication_failure = NULL;
     ogs_nas_authentication_failure_parameter_t
         *authentication_failure_parameter = NULL;
 
     ogs_sbi_message_t *sbi_message = NULL;
+
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -2098,6 +2159,7 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
     switch (e->h.id) {
     case OGS_FSM_ENTRY_SIG:
         amf_ue->auth_synch_fail_count = 0;
+        amf_ue->auth_ngksi_fail_count = 0;
         break;
     case OGS_FSM_EXIT_SIG:
         break;
@@ -2124,7 +2186,7 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                     amf_ue, &nas_message->gmm.authentication_response);
 
             if (rv != OGS_OK) {
-                ogs_error("gmm_handle_authentication_response() failed");
+                ogs_warn("gmm_handle_authentication_response() failed");
                 r = nas_5gs_send_authentication_reject(amf_ue);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
@@ -2159,9 +2221,20 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                 break;
 
             case OGS_5GMM_CAUSE_NGKSI_ALREADY_IN_USE:
-                ogs_warn("Authentication failure(ngKSI already in use)");
+                ogs_warn("[%s] Authentication failure"
+                        "(ngKSI already in use[count=%d])",
+                        amf_ue->suci, amf_ue->auth_ngksi_fail_count);
+
+                amf_ue->auth_ngksi_fail_count++;
+
+                if (amf_ue->auth_ngksi_fail_count >= 2) {
+                    ogs_warn("[%s] Too many ngKSI authentication failures, "
+                            "sending AUTHENTICATION REJECT", amf_ue->suci);
+                    break;
+                }
+
                 r = amf_ue_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
+                        OpenAPI_service_name_nausf_auth, NULL,
                         amf_nausf_auth_build_authenticate,
                         amf_ue, 0, NULL);
                 ogs_expect(r == OGS_OK);
@@ -2186,7 +2259,7 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                     break;
                 }
                 r = amf_ue_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
+                        OpenAPI_service_name_nausf_auth, NULL,
                         amf_nausf_auth_build_authenticate,
                         amf_ue, 0, authentication_failure_parameter->auts);
                 ogs_expect(r == OGS_OK);
@@ -2222,7 +2295,7 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
             }
 
             r = amf_ue_sbi_discover_and_send(
-                    OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
+                    OpenAPI_service_name_nausf_auth, NULL,
                     amf_nausf_auth_build_authenticate, amf_ue, 0, NULL);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
@@ -2234,7 +2307,18 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
             break;
 
         case OGS_NAS_5GS_DEREGISTRATION_REQUEST_FROM_UE:
-            ogs_warn("[%s] Deregistration request", amf_ue->supi);
+            de_registration_type = &nas_message->gmm.
+                deregistration_request_from_ue.de_registration_type;
+            if (amf_ue->can_restore_context &&
+                    (!h.integrity_protected ||
+                     !SECURITY_CONTEXT_IS_VALID(amf_ue) ||
+                     !gmm_check_ngksi(amf_ue, de_registration_type->tsc,
+                         de_registration_type->ksi))) {
+                ogs_warn("[%s] Ignore unverified Deregistration request "
+                        "during authentication", amf_ue->supi);
+                break;
+            }
+            ogs_error("[%s] Deregistration request", amf_ue->supi);
 
             gmm_handle_deregistration_request(
                     amf_ue, &nas_message->gmm.deregistration_request_from_ue);
@@ -2275,8 +2359,10 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
         sbi_message = e->h.sbi.message;
         ogs_assert(sbi_message);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NAUSF_AUTH)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nausf_auth:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_AUTHENTICATIONS)
 
@@ -2358,7 +2444,7 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_UECM)
+        case OpenAPI_service_name_nudm_uecm:
             if (sbi_message->res_status != OGS_SBI_HTTP_STATUS_CREATED &&
                 sbi_message->res_status != OGS_SBI_HTTP_STATUS_NO_CONTENT &&
                 sbi_message->res_status != OGS_SBI_HTTP_STATUS_OK) {
@@ -2399,7 +2485,21 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
+        case OpenAPI_service_name_nudm_sdm:
+            /*
+             * A combined SDM response (dataset-names) has no resource
+             * component[1] and is only handled in
+             * gmm_state_initial_context_setup(). Arriving here means the
+             * UE state has changed since the request was sent; ignore it
+             * instead of asserting in the SWITCH DEFAULT below.
+             */
+            if (!sbi_message->h.resource.component[1]) {
+                ogs_warn("[%s] Ignore late dataset-names response "
+                        "[%d] in (%s)",
+                        amf_ue->supi, sbi_message->res_status,
+                        sbi_message->h.method);
+                break;
+            }
             if ((sbi_message->res_status != OGS_SBI_HTTP_STATUS_OK) &&
                 (sbi_message->res_status != OGS_SBI_HTTP_STATUS_CREATED) &&
                 (sbi_message->res_status != OGS_SBI_HTTP_STATUS_NO_CONTENT)) {
@@ -2461,7 +2561,7 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_AM_POLICY_CONTROL)
+        case OpenAPI_service_name_npcf_am_policy_control:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_POLICIES)
                 SWITCH(sbi_message->h.method)
@@ -2489,16 +2589,173 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        DEFAULT
+        case OpenAPI_service_name_namf_comm:
+            SWITCH(sbi_message->h.resource.component[0])
+            CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
+                SWITCH(sbi_message->h.resource.component[2])
+                CASE(OGS_SBI_RESOURCE_NAME_TRANSFER)
+                CASE(OGS_SBI_RESOURCE_NAME_TRANSFER_UPDATE)
+/*
+ * Issues: #4691
+ *
+ * gmm_state_authentication()
+ *
+ * Ignore late Namf_Communication response.
+ *
+ * A UEContextTransfer or RegistrationStatusUpdate response may arrive
+ * while the AMF is already handling a subsequent Registration Request.
+ * In this code path, the response belongs to the previous registration
+ * procedure and does not require any further processing.
+ *
+ * The response is intentionally ignored to avoid unnecessary handling.
+ */
+                    ogs_warn("[%s] Ignoring Namf_Communication response"
+                            "[%d] in (%s:%s)",
+                            amf_ue->supi, sbi_message->res_status,
+                            sbi_message->h.method,
+                            sbi_message->h.resource.component[2]);
+                    break;
+
+                DEFAULT
+                    ogs_error("Invalid resource name [%s]",
+                            sbi_message->h.resource.component[2]);
+                    ogs_assert_if_reached();
+                END
+                break;
+
+            DEFAULT
+                ogs_error("Invalid resource name [%s]",
+                        sbi_message->h.resource.component[0]);
+                ogs_assert_if_reached();
+            END
+            break;
+
+        default:
             ogs_error("Invalid service name [%s]", sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
         break;
 
     default:
         ogs_error("Unknown event[%s]", amf_event_get_name(e));
         break;
     }
+}
+
+static void gmm_continue_registration(ogs_fsm_t *s, amf_ue_t *amf_ue)
+{
+    int r;
+    ran_ue_t *ran_ue = NULL;
+    amf_nsmf_pdusession_sm_context_param_t param;
+
+    ogs_assert(s);
+    ogs_assert(amf_ue);
+
+    if (amf_ue->nas.message_type == OGS_NAS_5GS_REGISTRATION_REQUEST) {
+        OGS_FSM_TRAN(s, &gmm_state_initial_context_setup);
+        if (amf_ue->registration_session_release_after_authentication) {
+            amf_ue->registration_session_release_after_authentication = false;
+            ran_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+            ogs_assert(ran_ue);
+
+            memset(&param, 0, sizeof(param));
+            param.ue_location = true;
+            param.ue_timezone = true;
+            amf_ue->registration_session_release_pending = true;
+            amf_sbi_send_release_all_sessions(ran_ue, amf_ue,
+                    AMF_RELEASE_SM_CONTEXT_AUTHENTICATED_REGISTRATION, &param);
+            if (!AMF_SESSION_SYNC_DONE(amf_ue,
+                        AMF_RELEASE_SM_CONTEXT_AUTHENTICATED_REGISTRATION))
+                return;
+            amf_ue->registration_session_release_pending = false;
+        }
+    } else if (amf_ue->nas.message_type == OGS_NAS_5GS_SERVICE_REQUEST) {
+        OGS_FSM_TRAN(s, &gmm_state_registered);
+    } else {
+        ogs_fatal("Invalid OGS_NAS_5GS[%d]", amf_ue->nas.message_type);
+        ogs_assert_if_reached();
+    }
+
+    r = amf_ue_sbi_discover_and_send(
+            OpenAPI_service_name_nudm_uecm, NULL,
+            amf_nudm_uecm_build_registration, amf_ue, 0, NULL);
+    ogs_expect(r == OGS_OK);
+    ogs_assert(r != OGS_ERROR);
+}
+
+static void gmm_complete_equipment_identity_check(
+        ogs_fsm_t *s, amf_ue_t *amf_ue, ogs_nas_5gmm_cause_t cause)
+{
+    int r;
+    ran_ue_t *ran_ue = NULL;
+
+    ogs_assert(s);
+    ogs_assert(amf_ue);
+
+    ran_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    if (!ran_ue) {
+        ogs_error("[%s] NG context has already been removed", amf_ue->supi);
+        OGS_FSM_TRAN(s, &gmm_state_exception);
+        return;
+    }
+
+    if (cause == OGS_5GMM_CAUSE_REQUEST_ACCEPTED) {
+        ogs_info("[%s] Continue registration after 5G-EIR check",
+                amf_ue->supi);
+        gmm_continue_registration(s, amf_ue);
+        return;
+    }
+
+    ogs_warn("[%s] Registration rejected after 5G-EIR check [cause:%d]",
+            amf_ue->supi, cause);
+    r = nas_5gs_send_registration_reject(ran_ue, amf_ue, cause);
+    ogs_expect(r == OGS_OK);
+    ogs_assert(r != OGS_ERROR);
+    OGS_FSM_TRAN(s, &gmm_state_exception);
+}
+
+static void gmm_security_mode_completed(ogs_fsm_t *s, amf_ue_t *amf_ue)
+{
+    int r;
+    ogs_nas_5gmm_cause_t cause;
+
+    ogs_assert(s);
+    ogs_assert(amf_ue);
+
+    if (amf_ue->eir_check_pending) {
+        ogs_error("[%s] 5G-EIR check is already pending", amf_ue->supi);
+        return;
+    }
+
+    if (!amf_n5geir_eic_check_wanted(amf_ue)) {
+        ogs_info("[%s] Skip 5G-EIR check [message:%d,type:%d,enabled:%d]",
+                amf_ue->supi, amf_ue->nas.message_type,
+                amf_ue->nas.registration.value,
+                amf_self()->eir.enabled);
+        gmm_continue_registration(s, amf_ue);
+        return;
+    }
+
+    if (ogs_pei_is_valid(amf_ue->pei)) {
+        r = amf_ue_sbi_discover_and_send_eir(amf_ue);
+        if (r == OGS_OK) {
+            amf_ue->eir_check_pending = true;
+            ogs_info("[%s] Waiting for 5G-EIR equipment status", amf_ue->supi);
+            return;
+        }
+
+        cause = amf_n5geir_eic_failure_cause();
+    } else {
+        ogs_error("[%s] No usable PEI for 5G-EIR "
+                "[missing_pei_action:%s]", amf_ue->supi,
+                amf_self()->eir.missing_pei_action ==
+                    OGS_EIR_ACTION_REJECT ? "reject" : "allow");
+        cause = amf_self()->eir.missing_pei_action == OGS_EIR_ACTION_REJECT ?
+            OGS_5GMM_CAUSE_5GS_SERVICES_NOT_ALLOWED :
+            OGS_5GMM_CAUSE_REQUEST_ACCEPTED;
+    }
+
+    gmm_complete_equipment_identity_check(s, amf_ue, cause);
 }
 
 void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
@@ -2509,7 +2766,10 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
     ran_ue_t *ran_ue = NULL;
     ogs_nas_5gs_message_t *nas_message = NULL;
     ogs_nas_security_header_type_t h;
+    ogs_nas_de_registration_type_t *de_registration_type = NULL;
     ogs_sbi_message_t *sbi_message = NULL;
+    ogs_sbi_xact_t *xact = NULL, *next_xact = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -2527,6 +2787,24 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
         ogs_assert(r != OGS_ERROR);
         break;
     case OGS_FSM_EXIT_SIG:
+        /* A result belongs only to this registration procedure. */
+        amf_ue->eir_check_pending = false;
+        ogs_list_for_each_safe(&amf_ue->sbi.xact_list, next_xact, xact) {
+            if (xact->service_name == OpenAPI_service_name_n5g_eir_eic) {
+                ogs_error("[%s] Cancel pending 5G-EIR transaction",
+                        amf_ue->supi);
+                ogs_sbi_xact_remove(xact);
+            }
+        }
+        break;
+    case AMF_EVENT_5GMM_EIR_FAILURE:
+        if (!amf_ue->eir_check_pending) {
+            ogs_error("[%s] Ignore stale 5G-EIR failure", amf_ue->supi);
+            break;
+        }
+
+        gmm_cause = amf_n5geir_eic_failure_cause();
+        gmm_complete_equipment_identity_check(s, amf_ue, gmm_cause);
         break;
     case AMF_EVENT_5GMM_MESSAGE:
         nas_message = e->nas.message;
@@ -2545,9 +2823,17 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
 
         h.type = e->nas.type;
 
+        if (amf_ue->eir_check_pending &&
+                nas_message->gmm.h.message_type !=
+                    OGS_NAS_5GS_DEREGISTRATION_REQUEST_FROM_UE) {
+            ogs_warn("[%s] Ignore NAS message while 5G-EIR check is pending",
+                    amf_ue->supi);
+            break;
+        }
+
         switch (nas_message->gmm.h.message_type) {
         case OGS_NAS_5GS_SECURITY_MODE_COMPLETE:
-            ogs_debug("[%s] Security mode complete", amf_ue->supi);
+            ogs_info("[%s] Security mode complete", amf_ue->supi);
 
         /*
          * TS24.501
@@ -2576,13 +2862,6 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                 break;
             }
 
-            /*
-             * If the OLD RAN_UE is being maintained in AMF-UE Context,
-             * it deletes the NG Context after exchanging
-             * the UEContextReleaseCommand/Complete with the gNB
-             */
-            CLEAR_NG_CONTEXT(amf_ue);
-
             CLEAR_AMF_UE_TIMER(amf_ue->t3560);
 
             gmm_cause = gmm_handle_security_mode_complete(
@@ -2594,9 +2873,17 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                 r = nas_5gs_send_gmm_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
-                OGS_FSM_TRAN(s, gmm_state_exception);
+                AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
+
+            amf_ue->can_restore_context = false;
+            /*
+             * If the OLD RAN_UE is being maintained in AMF-UE Context,
+             * it deletes the NG Context after exchanging
+             * the UEContextReleaseCommand/Complete with the gNB
+             */
+            CLEAR_NG_CONTEXT(amf_ue);
 
             if (amf_ue->amf_ue_context_transfer_state ==
                     UE_CONTEXT_TRANSFER_NEW_AMF_STATE) {
@@ -2620,7 +2907,7 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                 ogs_sbi_discovery_option_set_guami(discovery_option, &guami);
 
                 r = amf_ue_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NAMF_COMM, discovery_option,
+                        OpenAPI_service_name_namf_comm, discovery_option,
                         amf_namf_comm_build_registration_status_update,
                         amf_ue, state,
                         (void *)OpenAPI_ue_context_transfer_status_TRANSFERRED);
@@ -2638,31 +2925,16 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
             ogs_kdf_nh_gnb(amf_ue->kamf, amf_ue->kgnb, amf_ue->nh);
             amf_ue->nhcc = 1;
 
-            r = amf_ue_sbi_discover_and_send(
-                    OGS_SBI_SERVICE_TYPE_NUDM_UECM, NULL,
-                    amf_nudm_uecm_build_registration, amf_ue, 0, NULL);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
-
-            if (amf_ue->nas.message_type == OGS_NAS_5GS_REGISTRATION_REQUEST) {
-                OGS_FSM_TRAN(s, &gmm_state_initial_context_setup);
-            } else if (amf_ue->nas.message_type ==
-                        OGS_NAS_5GS_SERVICE_REQUEST) {
-                OGS_FSM_TRAN(s, &gmm_state_registered);
-            } else {
-                ogs_fatal("Invalid OGS_NAS_5GS[%d]", amf_ue->nas.message_type);
-                ogs_assert_if_reached();
-            }
+            gmm_security_mode_completed(s, amf_ue);
             break;
         case OGS_NAS_5GS_SECURITY_MODE_REJECT:
             ogs_warn("[%s] Security mode reject : Cause[%d]",
                     amf_ue->supi,
                     nas_message->gmm.security_mode_reject.gmm_cause);
-            CLEAR_AMF_UE_TIMER(amf_ue->t3560);
-            OGS_FSM_TRAN(s, &gmm_state_exception);
+            AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
             break;
         case OGS_NAS_5GS_REGISTRATION_REQUEST:
-            ogs_warn("Registration request");
+            ogs_error("Registration request");
             gmm_cause = gmm_handle_registration_request(
                     amf_ue, h, e->ngap.code,
                     &nas_message->gmm.registration_request);
@@ -2672,12 +2944,12 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                 r = nas_5gs_send_registration_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
-                OGS_FSM_TRAN(s, gmm_state_exception);
+                AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
 
             r = amf_ue_sbi_discover_and_send(
-                    OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
+                    OpenAPI_service_name_nausf_auth, NULL,
                     amf_nausf_auth_build_authenticate, amf_ue, 0, NULL);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
@@ -2692,7 +2964,7 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                     );
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
-            OGS_FSM_TRAN(s, &gmm_state_exception);
+            AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
             break;
 
         case OGS_NAS_5GS_5GMM_STATUS:
@@ -2701,7 +2973,18 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
             break;
 
         case OGS_NAS_5GS_DEREGISTRATION_REQUEST_FROM_UE:
-            ogs_warn("[%s] Deregistration request", amf_ue->supi);
+            de_registration_type = &nas_message->gmm.
+                deregistration_request_from_ue.de_registration_type;
+            if ((amf_ue->can_restore_context || amf_ue->eir_check_pending) &&
+                    (!h.integrity_protected ||
+                     !SECURITY_CONTEXT_IS_VALID(amf_ue) ||
+                     !gmm_check_ngksi(amf_ue, de_registration_type->tsc,
+                         de_registration_type->ksi))) {
+                ogs_warn("[%s] Ignore unverified Deregistration request "
+                        "during security mode", amf_ue->supi);
+                break;
+            }
+            ogs_error("[%s] Deregistration request", amf_ue->supi);
 
             gmm_handle_deregistration_request(
                     amf_ue, &nas_message->gmm.deregistration_request_from_ue);
@@ -2717,8 +3000,10 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
         sbi_message = e->h.sbi.message;
         ogs_assert(sbi_message);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NAUSF_AUTH)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nausf_auth:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_AUTHENTICATIONS)
 
@@ -2765,7 +3050,7 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 SWITCH(sbi_message->h.resource.component[2])
@@ -2794,23 +3079,7 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                     ogs_kdf_nh_gnb(amf_ue->kamf, amf_ue->kgnb, amf_ue->nh);
                     amf_ue->nhcc = 1;
 
-                    r = amf_ue_sbi_discover_and_send(
-                            OGS_SBI_SERVICE_TYPE_NUDM_UECM, NULL,
-                            amf_nudm_uecm_build_registration, amf_ue, 0, NULL);
-                    ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
-
-                    if (amf_ue->nas.message_type ==
-                            OGS_NAS_5GS_REGISTRATION_REQUEST) {
-                        OGS_FSM_TRAN(s, &gmm_state_initial_context_setup);
-                    } else if (amf_ue->nas.message_type ==
-                                OGS_NAS_5GS_SERVICE_REQUEST) {
-                        OGS_FSM_TRAN(s, &gmm_state_registered);
-                    } else {
-                        ogs_fatal("Invalid OGS_NAS_5GS[%d]",
-                                amf_ue->nas.message_type);
-                        ogs_assert_if_reached();
-                    }
+                    gmm_security_mode_completed(s, amf_ue);
                     break;
 
                 DEFAULT
@@ -2827,15 +3096,44 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        DEFAULT
+        case OpenAPI_service_name_n5g_eir_eic:
+            if (!amf_ue->eir_check_pending) {
+                ogs_error("[%s] Ignore unexpected 5G-EIR response",
+                        amf_ue->supi);
+                break;
+            }
+
+            SWITCH(sbi_message->h.resource.component[0])
+            CASE(OGS_SBI_RESOURCE_NAME_EQUIPMENT_STATUS)
+                gmm_cause = amf_n5geir_eic_handle_equipment_status(
+                        amf_ue, sbi_message);
+                gmm_complete_equipment_identity_check(s, amf_ue, gmm_cause);
+                break;
+
+            DEFAULT
+                ogs_error("Invalid resource name [%s]",
+                        sbi_message->h.resource.component[0]);
+                ogs_assert_if_reached();
+            END
+            break;
+
+        default:
             ogs_error("Invalid service name [%s]", sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
         break;
 
     case AMF_EVENT_5GMM_TIMER:
         switch (e->h.timer_id) {
         case AMF_TIMER_T3560:
+            /* Security Mode Complete clears the saved command. Ignore a
+             * queued expiry while waiting for UE context transfer or EIR. */
+            if (!amf_ue->t3560.pkbuf) {
+                ogs_error("[%s] Ignore T3560 expiry after command cleared",
+                        amf_ue->supi);
+                break;
+            }
+
             if (amf_ue->t3560.retry_count >=
                     amf_timer_cfg(AMF_TIMER_T3560)->max_count) {
                 ogs_warn("[%s] Retransmission failed. Stop", amf_ue->supi);
@@ -2866,7 +3164,7 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
 
 void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
 {
-    int rv, r, state, xact_count = 0;
+    int rv, r, state, xact_count;
     ogs_nas_5gmm_cause_t gmm_cause;
 
     amf_ue_t *amf_ue = NULL;
@@ -2878,7 +3176,8 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
     ogs_sbi_message_t *sbi_message = NULL;
 
     gmm_configuration_update_command_param_t gmm_param;
-    amf_nsmf_pdusession_sm_context_param_t nsmf_param;
+
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -2898,6 +3197,8 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
     case OGS_FSM_ENTRY_SIG:
         break;
     case OGS_FSM_EXIT_SIG:
+        if (amf_ue->registration_session_release_pending)
+            amf_sbi_cancel_registration_session_release(amf_ue);
         break;
 
     case OGS_EVENT_SBI_CLIENT:
@@ -2905,8 +3206,16 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
         ogs_assert(sbi_message);
         state = e->h.sbi.state;
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NAUSF_AUTH)
+        if (amf_ue->registration_session_release_pending) {
+            ogs_error("[%s] Ignore SBI result while registration session "
+                    "release is pending", amf_ue->supi);
+            break;
+        }
+
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nausf_auth:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_AUTHENTICATIONS)
 
@@ -2953,7 +3262,7 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_UECM)
+        case OpenAPI_service_name_nudm_uecm:
 
             SWITCH(sbi_message->h.resource.component[1])
             CASE(OGS_SBI_RESOURCE_NAME_REGISTRATIONS)
@@ -2974,10 +3283,9 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                 SWITCH(sbi_message->h.method)
                 CASE(OGS_SBI_HTTP_METHOD_PUT)
                     r = amf_ue_sbi_discover_and_send(
-                            OGS_SBI_SERVICE_TYPE_NUDM_SDM, NULL,
-                            amf_nudm_sdm_build_get,
-                            amf_ue, state,
-                            (char *)OGS_SBI_RESOURCE_NAME_AM_DATA);
+                            OpenAPI_service_name_nudm_sdm, NULL,
+                            amf_nudm_sdm_build_get_datasets,
+                            amf_ue, state, NULL);
                     ogs_expect(r == OGS_OK);
                     ogs_assert(r != OGS_ERROR);
                     break;
@@ -2996,8 +3304,9 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
-            if (!strcmp(sbi_message->h.resource.component[1],
+        case OpenAPI_service_name_nudm_sdm:
+            if (sbi_message->h.resource.component[1] &&
+                !strcmp(sbi_message->h.resource.component[1],
                         OGS_SBI_RESOURCE_NAME_SDM_SUBSCRIPTIONS) &&
                 !strcmp(sbi_message->h.method, OGS_SBI_HTTP_METHOD_DELETE)) {
 /*
@@ -3021,6 +3330,38 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                         sbi_message->h.resource.component[1]);
 
                 UDM_SDM_CLEAR(amf_ue);
+                break;
+            }
+
+            /*
+             * Combined SDM retrieval:
+             *   GET /nudm-sdm/v2/{supi}?dataset-names=AM,SMF_SEL
+             *
+             * The response carries a single ProvisionedDataSets and has
+             * no resource component[1].
+             */
+            if (!sbi_message->h.resource.component[1]) {
+                if (sbi_message->res_status != OGS_SBI_HTTP_STATUS_OK) {
+                    ogs_error("[%s] HTTP response error [%d] in "
+                            "(%s:dataset-names)",
+                            amf_ue->supi, sbi_message->res_status,
+                            sbi_message->h.method);
+                    r = nas_5gs_send_gmm_reject_from_sbi(
+                            amf_ue, sbi_message->res_status);
+                    ogs_expect(r == OGS_OK);
+                    ogs_assert(r != OGS_ERROR);
+                    OGS_FSM_TRAN(&amf_ue->sm, &gmm_state_exception);
+                    break;
+                }
+
+                rv = amf_nudm_sdm_handle_provisioned_data_sets(
+                        amf_ue, state, sbi_message);
+                if (rv != OGS_OK) {
+                    ogs_error("[%s] amf_nudm_sdm_handle_provisioned"
+                            "_data_sets(%s) failed",
+                            amf_ue->supi, sbi_message->h.method);
+                    OGS_FSM_TRAN(&amf_ue->sm, &gmm_state_exception);
+                }
                 break;
             }
 
@@ -3064,7 +3405,7 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_AM_POLICY_CONTROL)
+        case OpenAPI_service_name_npcf_am_policy_control:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_POLICIES)
                 SWITCH(sbi_message->h.method)
@@ -3116,10 +3457,51 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        DEFAULT
+        case OpenAPI_service_name_namf_comm:
+            SWITCH(sbi_message->h.resource.component[0])
+            CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
+                SWITCH(sbi_message->h.resource.component[2])
+                CASE(OGS_SBI_RESOURCE_NAME_TRANSFER)
+                CASE(OGS_SBI_RESOURCE_NAME_TRANSFER_UPDATE)
+/*
+ * Issues: #4691
+ *
+ * gmm_state_initial_context_setup()
+ *
+ * Ignore late Namf_Communication response.
+ *
+ * A UEContextTransfer or RegistrationStatusUpdate response may arrive
+ * while the AMF is already handling a subsequent Registration Request.
+ * In this code path, the response belongs to the previous registration
+ * procedure and does not require any further processing.
+ *
+ * The response is intentionally ignored to avoid unnecessary handling.
+ */
+                    ogs_warn("[%s] Ignoring Namf_Communication response"
+                            "[%d] in (%s:%s)",
+                            amf_ue->supi, sbi_message->res_status,
+                            sbi_message->h.method,
+                            sbi_message->h.resource.component[2]);
+                    break;
+
+                DEFAULT
+                    ogs_error("Invalid resource name [%s]",
+                            sbi_message->h.resource.component[2]);
+                    ogs_assert_if_reached();
+                END
+                break;
+
+            DEFAULT
+                ogs_error("Invalid resource name [%s]",
+                        sbi_message->h.resource.component[0]);
+                ogs_assert_if_reached();
+            END
+            break;
+
+        default:
             ogs_error("Invalid service name [%s]", sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
         break;
 
     case AMF_EVENT_5GMM_MESSAGE:
@@ -3139,7 +3521,11 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
 
         h.type = e->nas.type;
 
-        xact_count = amf_sess_xact_count(amf_ue);
+        if (amf_ue->registration_session_release_pending) {
+            ogs_error("[%s] Ignore NAS message while registration session "
+                    "release is pending", amf_ue->supi);
+            break;
+        }
 
         switch (nas_message->gmm.h.message_type) {
         case OGS_NAS_5GS_REGISTRATION_COMPLETE:
@@ -3241,23 +3627,13 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                 break;
             }
 
-            memset(&nsmf_param, 0, sizeof(nsmf_param));
-            nsmf_param.ue_location = true;
-            nsmf_param.ue_timezone = true;
-
-            amf_sbi_send_release_all_sessions(
-                    ran_ue, amf_ue,
-                    AMF_RELEASE_SM_CONTEXT_NO_STATE, &nsmf_param);
-
-            if (!AMF_SESSION_RELEASE_PENDING(amf_ue) &&
-                amf_sess_xact_count(amf_ue) == xact_count) {
-                r = amf_ue_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
-                        amf_nausf_auth_build_authenticate,
-                        amf_ue, 0, NULL);
-                ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
-            }
+            amf_ue->registration_session_release_after_authentication = true;
+            r = amf_ue_sbi_discover_and_send(
+                    OpenAPI_service_name_nausf_auth, NULL,
+                    amf_nausf_auth_build_authenticate,
+                    amf_ue, 0, NULL);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
             OGS_FSM_TRAN(s, &gmm_state_authentication);
             break;
 
@@ -3295,7 +3671,36 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                     amf_timer_cfg(AMF_TIMER_T3550)->max_count) {
                 ogs_warn("[%s] Retransmission failed. Stop retransmission",
                         amf_ue->suci);
-                OGS_FSM_TRAN(&amf_ue->sm, &gmm_state_exception);
+                /*
+                 * TS 24.501, 5.5.1.2.8(c) and 5.5.1.3.8(c):
+                 * abort registration without removing the UE context.
+                 */
+                CLEAR_AMF_UE_TIMER(amf_ue->t3550);
+                OGS_FSM_TRAN(s, &gmm_state_registered);
+
+                ran_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+                if (!ran_ue) {
+                    ogs_timer_start(amf_ue->mobile_reachable.timer,
+                            ogs_time_from_sec(
+                                amf_self()->time.t3512.value + 240));
+                    break;
+                }
+
+                xact_count = amf_sess_xact_count(amf_ue);
+                ran_ue->deactivation.group = NGAP_Cause_PR_nas;
+                ran_ue->deactivation.cause = NGAP_CauseNas_normal_release;
+
+                amf_sbi_send_deactivate_all_sessions(
+                        ran_ue, amf_ue, AMF_UPDATE_SM_CONTEXT_DEACTIVATED,
+                        NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release);
+
+                if (amf_sess_xact_count(amf_ue) == xact_count) {
+                    r = ngap_send_ran_ue_context_release_command(ran_ue,
+                            NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release,
+                            NGAP_UE_CTX_REL_NG_REMOVE_AND_UNLINK, 0);
+                    ogs_expect(r == OGS_OK);
+                    ogs_assert(r != OGS_ERROR);
+                }
             } else {
                 amf_ue->t3550.retry_count++;
                 r = nas_5gs_send_registration_accept(amf_ue);
@@ -3360,6 +3765,7 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
     ogs_sbi_message_t *sbi_message = NULL;
 
     amf_nsmf_pdusession_sm_context_param_t param;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -3404,7 +3810,7 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
             ogs_sbi_discovery_option_set_guami(discovery_option, &guami);
 
             r = amf_ue_sbi_discover_and_send(
-                    OGS_SBI_SERVICE_TYPE_NAMF_COMM, discovery_option,
+                    OpenAPI_service_name_namf_comm, discovery_option,
                     amf_namf_comm_build_registration_status_update,
                     amf_ue, state,
                     (void *)OpenAPI_ue_context_transfer_status_NOT_TRANSFERRED);
@@ -3521,7 +3927,7 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
 
                     if (!PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                         r = amf_ue_sbi_discover_and_send(
-                                OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
+                                OpenAPI_service_name_npcf_am_policy_control,
                                 NULL,
                                 amf_npcf_am_policy_control_build_create,
                                 amf_ue, 0, NULL);
@@ -3554,7 +3960,7 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
                 if (!AMF_SESSION_RELEASE_PENDING(amf_ue) &&
                     amf_sess_xact_count(amf_ue) == xact_count) {
                     r = amf_ue_sbi_discover_and_send(
-                            OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
+                            OpenAPI_service_name_nausf_auth, NULL,
                             amf_nausf_auth_build_authenticate,
                             amf_ue, 0, NULL);
                     ogs_expect(r == OGS_OK);
@@ -3596,8 +4002,10 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NAUSF_AUTH)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nausf_auth:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_AUTHENTICATIONS)
 
@@ -3644,7 +4052,7 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_UECM)
+        case OpenAPI_service_name_nudm_uecm:
             SWITCH(sbi_message->h.resource.component[1])
             CASE(OGS_SBI_RESOURCE_NAME_REGISTRATIONS)
                 if (sbi_message->res_status != OGS_SBI_HTTP_STATUS_CREATED &&
@@ -3678,7 +4086,21 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
+        case OpenAPI_service_name_nudm_sdm:
+            /*
+             * A combined SDM response (dataset-names) has no resource
+             * component[1] and is only handled in
+             * gmm_state_initial_context_setup(). Arriving here means the
+             * UE state has changed since the request was sent; ignore it
+             * instead of asserting in the SWITCH DEFAULT below.
+             */
+            if (!sbi_message->h.resource.component[1]) {
+                ogs_warn("[%s] Ignore late dataset-names response "
+                        "[%d] in (%s)",
+                        amf_ue->supi, sbi_message->res_status,
+                        sbi_message->h.method);
+                break;
+            }
             if ((sbi_message->res_status != OGS_SBI_HTTP_STATUS_OK) &&
                 (sbi_message->res_status != OGS_SBI_HTTP_STATUS_CREATED) &&
                 (sbi_message->res_status != OGS_SBI_HTTP_STATUS_NO_CONTENT)) {
@@ -3740,7 +4162,7 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_AM_POLICY_CONTROL)
+        case OpenAPI_service_name_npcf_am_policy_control:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_POLICIES)
                 SWITCH(sbi_message->h.method)
@@ -3766,7 +4188,7 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 SWITCH(sbi_message->h.resource.component[2])
@@ -3824,11 +4246,11 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid service name [%s]", sbi_message->h.service.name);
             ogs_assert_if_reached();
 
-        END
+        }
         break;
 
     default:

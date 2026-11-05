@@ -1,14 +1,14 @@
 /*
  * access_network_id.h
  *
- * 
+ * Indicates the contents of Access Network ID. Used in the derivation of authentication vectors in EAP-AKA. 
  */
 
 #ifndef _OpenAPI_access_network_id_H_
 #define _OpenAPI_access_network_id_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

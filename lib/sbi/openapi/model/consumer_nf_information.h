@@ -8,22 +8,22 @@
 #define _OpenAPI_consumer_nf_information_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_consumer_nf_information_s OpenAPI_consumer_nf_information_t;
 #include "tai.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_consumer_nf_information_s OpenAPI_consumer_nf_information_t;
-typedef struct OpenAPI_consumer_nf_information_s {
+struct OpenAPI_consumer_nf_information_s {
     char *nf_id;
     char *nf_set_id;
     OpenAPI_list_t *tai_list;
-} OpenAPI_consumer_nf_information_t;
+};
 
 OpenAPI_consumer_nf_information_t *OpenAPI_consumer_nf_information_create(
     char *nf_id,

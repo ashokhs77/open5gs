@@ -27,8 +27,7 @@
 #include "s1ap-handler.h"
 #include "mme-sm.h"
 #include "mme-gtp-path.h"
-
-#define MAX_CELL_PER_ENB            8
+#include "mme-dns.h"
 
 static mme_context_t self;
 static ogs_diam_config_t g_diam_conf;
@@ -215,8 +214,24 @@ static int mme_context_prepare(void)
     self.diam_config->cnf_port = DIAMETER_PORT;
     self.diam_config->cnf_port_tls = DIAMETER_SECURE_PORT;
 
+    /* Set the default T3396 to 12 minutes */
+    self.time.t3396.value = 720;
     /* Set the default T3412 to 9 minutes for backward compatibility. */
     self.time.t3412.value = 540;
+
+    /* DNS-based SGW/PGW selection defaults (inactive until `mme.dns`
+     * is present in the configuration file) */
+    self.dns.enabled = false;
+    self.dns.timeout = 2;
+    self.dns.retries = 2;
+    self.dns.protocol = 0;      /* MME_DNS_PROTO_AUTO */
+    self.dns.cache_ttl = 60;
+    self.dns.guard_timeout = 3000;
+
+    self.eir.unknown_action     = OGS_EIR_ACTION_ALLOW;
+    self.eir.failure_action     = OGS_EIR_ACTION_ALLOW;
+    self.eir.missing_pei_action = OGS_EIR_ACTION_ALLOW;
+    self.eir.timeout            = 3;
 
     return OGS_OK;
 }
@@ -297,26 +312,47 @@ static int mme_context_validation(void)
                 ogs_app()->file);
         return OGS_ERROR;
     }
-    if (ogs_nas_gprs_timer_from_sec(&gprs_timer, self.time.t3402.value) !=
+    /* Zero omits optional NAS timer IEs; T3412 must be non-zero. */
+    if (self.time.t3402.value && /* Optional */
+        ogs_nas_gprs_timer_from_sec(&gprs_timer, self.time.t3402.value) !=
         OGS_OK) {
-        ogs_error("Not support GPRS Timer [%d]", (int)self.time.t3402.value);
+        ogs_error("Invalid mme.time.t3402.value `%lld` in '%s': "
+                "cannot encode as a NAS timer",
+                (long long)self.time.t3402.value, ogs_app()->file);
         return OGS_ERROR;
     }
-    if (!self.time.t3412.value) {
+    if (self.time.t3396.value && /* Optional */
+        ogs_nas_gprs_timer_3_from_sec(&gprs_timer, self.time.t3396.value) !=
+        OGS_OK) {
+        ogs_error("Invalid mme.time.t3396.value `%lld` in '%s': "
+                "cannot encode as a NAS timer",
+                (long long)self.time.t3396.value, ogs_app()->file);
+        return OGS_ERROR;
+    }
+    if (!self.time.t3412.value) { /* Mandatory */
         ogs_error("No mme.time.t3412.value in '%s'",
                 ogs_app()->file);
         return OGS_ERROR;
     }
     if (ogs_nas_gprs_timer_from_sec(&gprs_timer, self.time.t3412.value) !=
         OGS_OK) {
-        ogs_error("Not support GPRS Timer [%d]", (int)self.time.t3412.value);
+        ogs_error("Invalid mme.time.t3412.value `%lld` in '%s': "
+                "cannot encode as a NAS timer",
+                (long long)self.time.t3412.value, ogs_app()->file);
         return OGS_ERROR;
     }
-    if (ogs_nas_gprs_timer_from_sec(&gprs_timer, self.time.t3423.value) !=
+    if (self.time.t3423.value && /* Optional */
+        ogs_nas_gprs_timer_from_sec(&gprs_timer, self.time.t3423.value) !=
         OGS_OK) {
-        ogs_error("Not support GPRS Timer [%d]", (int)self.time.t3423.value);
+        ogs_error("Invalid mme.time.t3423.value `%lld` in '%s': "
+                "cannot encode as a NAS timer",
+                (long long)self.time.t3423.value, ogs_app()->file);
         return OGS_ERROR;
     }
+
+    if (self.eir.enabled && self.eir.timeout == 0)
+        ogs_warn("mme.eir.timeout is 0: an unresponsive EIR will never "
+                 "trigger failure_action");
 
     return OGS_OK;
 }
@@ -2466,6 +2502,57 @@ int mme_context_parse_config(void)
                     }
                 } else if (!strcmp(mme_key, "mme_name")) {
                     self.mme_name = ogs_yaml_iter_value(&mme_iter);
+                } else if (!strcmp(mme_key, "eir")) {
+                    ogs_yaml_iter_t eir_iter;
+                    ogs_yaml_iter_recurse(&mme_iter, &eir_iter);
+
+                    while (ogs_yaml_iter_next(&eir_iter)) {
+                        const char *eir_key = ogs_yaml_iter_key(&eir_iter);
+                        ogs_assert(eir_key);
+                        if (!strcmp(eir_key, "enabled")) {
+                            self.eir.enabled =
+                                ogs_yaml_iter_bool(&eir_iter);
+                        } else if (!strcmp(eir_key, "allowed_states")) {
+                            ogs_yaml_iter_t states;
+                            self.eir.allowed_states_present = true;
+                            self.eir.allow_whitelist = false;
+                            self.eir.allow_greylist = false;
+                            self.eir.allow_blacklist = false;
+                            ogs_yaml_iter_recurse(&eir_iter, &states);
+                            do {
+                                const char *value;
+                                if (ogs_yaml_iter_type(&states) == YAML_SEQUENCE_NODE &&
+                                        !ogs_yaml_iter_next(&states)) break;
+                                value = ogs_yaml_iter_value(&states);
+                                if (value) {
+                                    if (!strcmp(value, "WHITELIST")) self.eir.allow_whitelist = true;
+                                    else if (!strcmp(value, "GREYLIST")) self.eir.allow_greylist = true;
+                                    else if (!strcmp(value, "BLACKLIST")) self.eir.allow_blacklist = true;
+                                    else ogs_warn("Invalid EIR allowed_states value [%s]", value);
+                                }
+                            } while (ogs_yaml_iter_type(&states) == YAML_SEQUENCE_NODE);
+                        } else if (!strcmp(eir_key, "host")) {
+                            self.eir.host = ogs_yaml_iter_value(&eir_iter);
+                        } else if (!strcmp(eir_key, "realm")) {
+                            self.eir.realm = ogs_yaml_iter_value(&eir_iter);
+                        } else if (!strcmp(eir_key, "timeout")) {
+                            const char *v = ogs_yaml_iter_value(&eir_iter);
+                            if (v) self.eir.timeout = atoi(v);
+                        } else if (!strcmp(eir_key, "unknown_action")) {
+                            rv = ogs_app_parse_eir_action(&eir_iter,
+                                    eir_key, &self.eir.unknown_action);
+                            if (rv != OGS_OK) return rv;
+                        } else if (!strcmp(eir_key, "failure_action")) {
+                            rv = ogs_app_parse_eir_action(&eir_iter,
+                                    eir_key, &self.eir.failure_action);
+                            if (rv != OGS_OK) return rv;
+                        } else if (!strcmp(eir_key, "missing_pei_action")) {
+                            rv = ogs_app_parse_eir_action(&eir_iter,
+                                    eir_key, &self.eir.missing_pei_action);
+                            if (rv != OGS_OK) return rv;
+                        } else
+                            ogs_warn("unknown key `%s`", eir_key);
+                    }
                 } else if (!strcmp(mme_key, "time")) {
                     ogs_yaml_iter_t time_iter;
                     ogs_yaml_iter_recurse(&mme_iter, &time_iter);
@@ -2473,53 +2560,25 @@ int mme_context_parse_config(void)
                         const char *time_key = ogs_yaml_iter_key(&time_iter);
                         ogs_assert(time_key);
                         if (!strcmp(time_key, "t3402")) {
-                            ogs_yaml_iter_t t3402_iter;
-                            ogs_yaml_iter_recurse(&time_iter, &t3402_iter);
-
-                            while (ogs_yaml_iter_next(&t3402_iter)) {
-                                const char *t3402_key =
-                                    ogs_yaml_iter_key(&t3402_iter);
-                                ogs_assert(t3402_key);
-
-                                if (!strcmp(t3402_key, "value")) {
-                                    const char *v = ogs_yaml_iter_value(&t3402_iter);
-                                    if (v)
-                                        self.time.t3402.value = atoll(v);
-                                } else
-                                    ogs_warn("unknown key `%s`", t3402_key);
-                            }
+                            rv = ogs_app_parse_timer_seconds("mme",
+                                    &time_iter, &self.time.t3402.value);
+                            if (rv != OGS_OK)
+                                return rv;
+                        } else if (!strcmp(time_key, "t3396")) {
+                            rv = ogs_app_parse_timer_seconds("mme",
+                                    &time_iter, &self.time.t3396.value);
+                            if (rv != OGS_OK)
+                                return rv;
                         } else if (!strcmp(time_key, "t3412")) {
-                            ogs_yaml_iter_t t3412_iter;
-                            ogs_yaml_iter_recurse(&time_iter, &t3412_iter);
-
-                            while (ogs_yaml_iter_next(&t3412_iter)) {
-                                const char *t3412_key =
-                                    ogs_yaml_iter_key(&t3412_iter);
-                                ogs_assert(t3412_key);
-
-                                if (!strcmp(t3412_key, "value")) {
-                                    const char *v = ogs_yaml_iter_value(&t3412_iter);
-                                    if (v)
-                                        self.time.t3412.value = atoll(v);
-                                } else
-                                    ogs_warn("unknown key `%s`", t3412_key);
-                            }
+                            rv = ogs_app_parse_timer_seconds("mme",
+                                    &time_iter, &self.time.t3412.value);
+                            if (rv != OGS_OK)
+                                return rv;
                         } else if (!strcmp(time_key, "t3423")) {
-                            ogs_yaml_iter_t t3423_iter;
-                            ogs_yaml_iter_recurse(&time_iter, &t3423_iter);
-
-                            while (ogs_yaml_iter_next(&t3423_iter)) {
-                                const char *t3423_key =
-                                    ogs_yaml_iter_key(&t3423_iter);
-                                ogs_assert(t3423_key);
-
-                                if (!strcmp(t3423_key, "value")) {
-                                    const char *v = ogs_yaml_iter_value(&t3423_iter);
-                                    if (v)
-                                        self.time.t3423.value = atoll(v);
-                                } else
-                                    ogs_warn("unknown key `%s`", t3423_key);
-                            }
+                            rv = ogs_app_parse_timer_seconds("mme",
+                                    &time_iter, &self.time.t3423.value);
+                            if (rv != OGS_OK)
+                                return rv;
                         } else if (!strcmp(time_key, "t3512")) {
                             /* handle config in amf */
                         } else if (!strcmp(time_key, "nf_instance")) {
@@ -2535,62 +2594,106 @@ int mme_context_parse_config(void)
                     }
                 } else if (!strcmp(mme_key, "metrics")) {
                     /* handle config in metrics library */
-                } else if (!strcmp(mme_key, "eir")) {
-                    ogs_yaml_iter_t eir_iter;
-                    ogs_yaml_iter_recurse(&mme_iter, &eir_iter);
-
-                    while (ogs_yaml_iter_next(&eir_iter)) {
-                        const char *eir_key = ogs_yaml_iter_key(&eir_iter);
-                        ogs_assert(eir_key);
-                        if (!strcmp(eir_key, "enabled")) {
-                            ogs_nas_eir_t *eir = &self.eir;
-                            const char *c_eir_enabled = ogs_yaml_iter_value(&eir_iter);
-
-                            if (!strcmp("True", c_eir_enabled) || 
-                                !strcmp("true", c_eir_enabled)) {
-                                ogs_info("EIR functionality has been enabled");
-                                eir->enabled = true;
-                            }
-                            else {
-                                eir->enabled = false;
-                            }
-                        } if (!strcmp(eir_key, "allowed_states")) {
-                            ogs_yaml_iter_t allowed_states_iter;
-                            ogs_yaml_iter_recurse(&eir_iter,
-                                    &allowed_states_iter);
-                            ogs_assert(ogs_yaml_iter_type(
-                                        &allowed_states_iter) !=
-                                YAML_MAPPING_NODE);
-
+                } else if (!strcmp(mme_key, "dns")) {
+#ifndef MME_HAVE_CARES
+                    ogs_error("`mme.dns` is configured, but this MME was "
+                            "built without c-ares support");
+                    return OGS_ERROR;
+#else
+                    ogs_yaml_iter_t dns_iter;
+                    ogs_yaml_iter_recurse(&mme_iter, &dns_iter);
+                    self.dns.enabled = true;
+                    while (ogs_yaml_iter_next(&dns_iter)) {
+                        const char *dns_key = ogs_yaml_iter_key(&dns_iter);
+                        ogs_assert(dns_key);
+                        if (!strcmp(dns_key, "server")) {
+                            ogs_yaml_iter_t server_array, server_iter;
+                            ogs_yaml_iter_recurse(&dns_iter, &server_array);
                             do {
-                                const char *allowed_states_value = NULL;
+                                const char *address = NULL;
+                                uint16_t port = 53;
 
-                                if (ogs_yaml_iter_type(&allowed_states_iter) ==
+                                if (ogs_yaml_iter_type(&server_array) ==
+                                        YAML_MAPPING_NODE) {
+                                    memcpy(&server_iter, &server_array,
+                                            sizeof(ogs_yaml_iter_t));
+                                } else if (ogs_yaml_iter_type(&server_array) ==
                                         YAML_SEQUENCE_NODE) {
-                                    if (!ogs_yaml_iter_next(
-                                                &allowed_states_iter))
+                                    if (!ogs_yaml_iter_next(&server_array))
                                         break;
+                                    ogs_yaml_iter_recurse(
+                                            &server_array, &server_iter);
+                                } else if (ogs_yaml_iter_type(&server_array) ==
+                                        YAML_SCALAR_NODE) {
+                                    break;
+                                } else
+                                    ogs_assert_if_reached();
+
+                                while (ogs_yaml_iter_next(&server_iter)) {
+                                    const char *server_key =
+                                        ogs_yaml_iter_key(&server_iter);
+                                    ogs_assert(server_key);
+                                    if (!strcmp(server_key, "address")) {
+                                        address =
+                                            ogs_yaml_iter_value(&server_iter);
+                                    } else if (!strcmp(server_key, "port")) {
+                                        const char *v =
+                                            ogs_yaml_iter_value(&server_iter);
+                                        if (v) port = atoi(v);
+                                    } else
+                                        ogs_warn("unknown key `%s`",
+                                                server_key);
                                 }
 
-                                allowed_states_value = ogs_yaml_iter_value(&allowed_states_iter);
-                                if (allowed_states_value) {
-                                    if (strcmp(allowed_states_value, "WHITELIST") == 0) {
-                                        self.eir.allow_whitelist = true;
-                                    } else if (strcmp(allowed_states_value, "GREYLIST") == 0) {
-                                        self.eir.allow_greylist = true;
-                                    } else if (strcmp(allowed_states_value, "BLACKLIST") == 0) {
-                                        self.eir.allow_blacklist = true;
-                                    } else {
-                                        ogs_warn("'%s' is not a valid eir allowed_states value. "
-                                                 "Valid values include: WHITELIST, GREYLIST, BLACKLIST",
-                                                 allowed_states_value);
-                                    } 
+                                if (address &&
+                                    self.dns.num_of_server <
+                                        MME_DNS_MAX_SERVER) {
+                                    self.dns.server[
+                                        self.dns.num_of_server].address =
+                                            address;
+                                    self.dns.server[
+                                        self.dns.num_of_server].port = port;
+                                    self.dns.num_of_server++;
                                 }
-                            } while (
-                                ogs_yaml_iter_type(&allowed_states_iter) ==
+                            } while (ogs_yaml_iter_type(&server_array) ==
                                     YAML_SEQUENCE_NODE);
-                        }
-					}
+                        } else if (!strcmp(dns_key, "timeout")) {
+                            const char *v = ogs_yaml_iter_value(&dns_iter);
+                            if (v) self.dns.timeout = atoi(v);
+                        } else if (!strcmp(dns_key, "retries")) {
+                            const char *v = ogs_yaml_iter_value(&dns_iter);
+                            if (v) self.dns.retries = atoi(v);
+                        } else if (!strcmp(dns_key, "cache_ttl")) {
+                            const char *v = ogs_yaml_iter_value(&dns_iter);
+                            if (v) self.dns.cache_ttl = atoi(v);
+                        } else if (!strcmp(dns_key, "guard_timeout")) {
+                            const char *v = ogs_yaml_iter_value(&dns_iter);
+                            if (v) self.dns.guard_timeout = atoi(v);
+                        } else if (!strcmp(dns_key, "protocol")) {
+                            const char *v = ogs_yaml_iter_value(&dns_iter);
+                            if (v) {
+                                if (!strcmp(v, "auto"))
+                                    self.dns.protocol = 0;
+                                else if (!strcmp(v, "s5"))
+                                    self.dns.protocol = 1;
+                                else if (!strcmp(v, "s8"))
+                                    self.dns.protocol = 2;
+                                else {
+                                    ogs_error("unknown mme.dns.protocol "
+                                            "`%s` (auto|s5|s8)", v);
+                                    return OGS_ERROR;
+                                }
+                            }
+                        } else
+                            ogs_warn("unknown key `%s`", dns_key);
+                    }
+
+                    if (self.dns.num_of_server == 0) {
+                        ogs_error("`mme.dns` is configured "
+                                "without any `server`");
+                        return OGS_ERROR;
+                    }
+#endif /* MME_HAVE_CARES */
                 } else if (!strcmp(mme_key, "emergency")) {
                     ogs_yaml_iter_t emerg_iter;
                     ogs_yaml_iter_recurse(&mme_iter, &emerg_iter);
@@ -3143,6 +3246,82 @@ mme_hssmap_t *mme_hssmap_find_by_imsi_bcd(const char *imsi_bcd)
     return NULL;
 }
 
+void mme_ue_set_hss_identity(mme_ue_t *mme_ue,
+        const uint8_t *host, size_t host_len,
+        const uint8_t *realm, size_t realm_len)
+{
+    char *new_host = NULL, *new_realm = NULL;
+    bool same_host, same_realm;
+
+    ogs_assert(mme_ue);
+
+    if (!host || !host_len || !realm || !realm_len) {
+        ogs_warn("[%s] Cannot set incomplete HSS identity "
+                "[host:%s/%zu realm:%s/%zu]",
+                mme_ue->imsi_bcd,
+                host ? "present" : "missing", host_len,
+                realm ? "present" : "missing", realm_len);
+        return;
+    }
+
+    same_host = mme_ue->hss_host &&
+        strlen(mme_ue->hss_host) == host_len &&
+        memcmp(mme_ue->hss_host, host, host_len) == 0;
+    same_realm = mme_ue->hss_realm &&
+        strlen(mme_ue->hss_realm) == realm_len &&
+        memcmp(mme_ue->hss_realm, realm, realm_len) == 0;
+
+    if (same_host && same_realm)
+        return;
+
+    /* Diameter AVPs are OctetStrings and not NUL-terminated. Allocate the
+     * new pair before releasing the old pair so host/realm are replaced
+     * together in the MME event thread. */
+    new_host = ogs_strndup((const char *)host, host_len);
+    ogs_assert(new_host);
+    new_realm = ogs_strndup((const char *)realm, realm_len);
+    ogs_assert(new_realm);
+
+    if (mme_ue->hss_host || mme_ue->hss_realm) {
+        ogs_info("[%s] HSS identity changed [%s/%s] -> [%.*s/%.*s]",
+                mme_ue->imsi_bcd,
+                mme_ue->hss_host ? mme_ue->hss_host : "-",
+                mme_ue->hss_realm ? mme_ue->hss_realm : "-",
+                (int)host_len, (const char *)host,
+                (int)realm_len, (const char *)realm);
+    }
+
+    if (mme_ue->hss_host)
+        ogs_free(mme_ue->hss_host);
+    if (mme_ue->hss_realm)
+        ogs_free(mme_ue->hss_realm);
+
+    mme_ue->hss_host = new_host;
+    mme_ue->hss_realm = new_realm;
+}
+
+void mme_ue_clear_hss_identity(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    if (!mme_ue->hss_host && !mme_ue->hss_realm)
+        return;
+
+    ogs_debug("[%s] Forget HSS identity [%s/%s]",
+            mme_ue->imsi_bcd,
+            mme_ue->hss_host ? mme_ue->hss_host : "-",
+            mme_ue->hss_realm ? mme_ue->hss_realm : "-");
+
+    if (mme_ue->hss_host) {
+        ogs_free(mme_ue->hss_host);
+        mme_ue->hss_host = NULL;
+    }
+    if (mme_ue->hss_realm) {
+        ogs_free(mme_ue->hss_realm);
+        mme_ue->hss_realm = NULL;
+    }
+}
+
 mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
 {
     mme_enb_t *enb = NULL;
@@ -3205,8 +3384,16 @@ int mme_enb_remove(mme_enb_t *enb)
 
     ogs_hash_set(self.enb_addr_hash,
             enb->sctp.addr, sizeof(ogs_sockaddr_t), NULL);
+
+    /*
+     * S1 Setup on a new SCTP association may have already replaced this ID
+     * while shutdown of the old association was still pending. Removing
+     * the old context must not erase the replacement's ID mapping. A false
+     * result only skips unindexing; the old context is still torn down.
+     */
     if (enb->enb_id_presence == true)
-        ogs_hash_set(self.enb_id_hash, &enb->enb_id, sizeof(enb->enb_id), NULL);
+        ogs_hash_unset_if_owner(self.enb_id_hash,
+                &enb->enb_id, sizeof(enb->enb_id), enb);
 
     /*
      * CHECK:
@@ -3253,10 +3440,22 @@ int mme_enb_set_enb_id(mme_enb_t *enb, uint32_t enb_id)
 {
     ogs_assert(enb);
 
+    /*
+     * Remove our previous ID before changing its key bytes, but leave it
+     * alone if another association has already taken over that mapping.
+     */
     if (enb->enb_id_presence == true)
-        ogs_hash_set(self.enb_id_hash, &enb->enb_id, sizeof(enb->enb_id), NULL);
+        ogs_hash_unset_if_owner(self.enb_id_hash,
+                &enb->enb_id, sizeof(enb->enb_id), enb);
 
     enb->enb_id = enb_id;
+
+    /*
+     * A reconnect can register the same eNB-ID before the old association's
+     * shutdown event is handled: the last registration wins. The hash keeps
+     * its own copy of the key, so freeing or reusing the old context does not
+     * break lookups (including handover target lookup).
+     */
     ogs_hash_set(self.enb_id_hash, &enb->enb_id, sizeof(enb->enb_id), enb);
 
     enb->enb_id_presence = true;
@@ -3363,6 +3562,7 @@ void enb_ue_switch_to_enb(enb_ue_t *enb_ue, mme_enb_t *new_enb)
     ogs_assert(new_enb);
 
     enb = mme_enb_find_by_id(enb_ue->enb_id);
+    ogs_assert(enb);
 
     /* Remove from the old enb */
     ogs_list_remove(&enb->enb_ue_list, enb_ue);
@@ -3372,6 +3572,53 @@ void enb_ue_switch_to_enb(enb_ue_t *enb_ue, mme_enb_t *new_enb)
 
     /* Switch to enb */
     enb_ue->enb_id = new_enb->id;
+
+    /*
+     * Re-bind the SCTP output stream to the target eNB if needed.
+     *
+     * enb_ue->enb_ostream_id was allocated in enb_ue_add() in the range
+     * [1, max_num_of_ostreams-1] negotiated with the SOURCE eNB. eNBs
+     * from different vendors can negotiate a different number of SCTP
+     * streams; when the target eNB negotiated fewer streams, the
+     * carried-over stream id is out of range on the new association and
+     * ogs_sctp_senddata() fails with EINVAL(22), so e.g. the
+     * PathSwitchRequestAcknowledge is lost silently and the eNB reports
+     * ho-failure-in-target-EPC-eNB-or-target-system.
+     *
+     * The stream id is re-allocated from the target eNB's range only
+     * when it is out of range, so a handover between eNBs that
+     * negotiated the same stream count is not affected.
+     */
+    if (new_enb->max_num_of_ostreams < 2) {
+        /*
+         * The target eNB negotiated a single SCTP stream: there is no
+         * UE-associated stream available (stream 0 is reserved for the
+         * sole use of non-UE-associated signalling, 3GPP TS 36.412
+         * clause 7, and enb_ue_add() rejects such an eNB as well).
+         * Keep the current stream id unchanged; UE-associated
+         * signalling toward this eNB will fail to be delivered, as
+         * before this change.
+         */
+        ogs_error("Target eNB has no UE-associated SCTP stream "
+                "[MAX:%d]; UE-associated signalling cannot be delivered",
+                new_enb->max_num_of_ostreams);
+        return;
+    }
+
+    if (enb_ue->enb_ostream_id >= new_enb->max_num_of_ostreams) {
+        uint16_t old_ostream_id = enb_ue->enb_ostream_id;
+
+        enb_ue->enb_ostream_id =
+            OGS_NEXT_ID(new_enb->ostream_id, 1,
+                    new_enb->max_num_of_ostreams-1);
+
+        ogs_warn("SCTP output stream re-bound to the target eNB "
+                "[OLD:%d NEW:%d MAX:%d] "
+                "ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
+                old_ostream_id, enb_ue->enb_ostream_id,
+                new_enb->max_num_of_ostreams,
+                enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
+    }
 }
 
 enb_ue_t *enb_ue_find_by_enb_ue_s1ap_id(
@@ -3542,8 +3789,8 @@ void mme_ue_confirm_guti(mme_ue_t *mme_ue)
     if (MME_CURRENT_GUTI_IS_AVAILABLE(mme_ue)) {
         /* MME has a VALID GUTI
          * As such, we need to remove previous GUTI in hash table */
-        ogs_hash_set(self.guti_ue_hash,
-                &mme_ue->current.guti, sizeof(ogs_nas_eps_guti_t), NULL);
+        ogs_hash_unset_if_owner(self.guti_ue_hash,
+                &mme_ue->current.guti, sizeof(ogs_nas_eps_guti_t), mme_ue);
         ogs_assert(mme_m_tmsi_free(mme_ue->current.m_tmsi) == OGS_OK);
     }
 
@@ -3784,11 +4031,14 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
 
     /* Initialization */
     mme_ue->nas_eps.mme.ksi = OGS_NAS_KSI_NO_KEY_IS_AVAILABLE;
+    mme_ue->nas_eps.ue.ksi = OGS_NAS_KSI_NO_KEY_IS_AVAILABLE;
 
     mme_ue_fsm_init(mme_ue);
 
     ogs_list_add(&self.mme_ue_list, mme_ue);
 
+    ogs_info("[EBI-TRACK] UE-CREATED ue_id[%d] bitmap[0x%04x]",
+            mme_ue->id, mme_ue->ebi_bitmap);
     ogs_info("[Added] Number of MME-UEs is now %d",
             ogs_list_count(&self.mme_ue_list));
 
@@ -3813,12 +4063,12 @@ void mme_ue_remove(mme_ue_t *mme_ue)
     if (sgw_ue) sgw_ue_remove(sgw_ue);
 
     if (mme_ue->imsi_len != 0)
-        ogs_hash_set(mme_self()->imsi_ue_hash,
-                mme_ue->imsi, mme_ue->imsi_len, NULL);
+        ogs_hash_unset_if_owner(mme_self()->imsi_ue_hash,
+                mme_ue->imsi, mme_ue->imsi_len, mme_ue);
 
     if (MME_CURRENT_GUTI_IS_AVAILABLE(mme_ue)) {
-        ogs_hash_set(self.guti_ue_hash,
-                &mme_ue->current.guti, sizeof(ogs_nas_eps_guti_t), NULL);
+        ogs_hash_unset_if_owner(self.guti_ue_hash,
+                &mme_ue->current.guti, sizeof(ogs_nas_eps_guti_t), mme_ue);
         ogs_assert(mme_m_tmsi_free(mme_ue->current.m_tmsi) == OGS_OK);
     }
 
@@ -3838,6 +4088,9 @@ void mme_ue_remove(mme_ue_t *mme_ue)
     /* Clear Transparent Container */
     OGS_ASN_CLEAR_DATA(&mme_ue->container);
 
+    /* Clear learned HSS identity */
+    mme_ue_clear_hss_identity(mme_ue);
+
     /* Delete All Timers */
     CLEAR_MME_UE_ALL_TIMERS(mme_ue);
     ogs_timer_delete(mme_ue->t3413.timer);
@@ -3854,10 +4107,12 @@ void mme_ue_remove(mme_ue_t *mme_ue)
     mme_sess_remove_all(mme_ue);
     mme_session_remove_all(mme_ue);
 
+    ogs_info("[EBI-TRACK] UE-REMOVED ue_id[%d] IMSI[%s] bitmap[0x%04x]",
+            mme_ue->id, mme_ue->imsi_bcd, mme_ue->ebi_bitmap);
+
     ogs_pool_free(&mme_s11_teid_pool, mme_ue->mme_s11_teid_node);
     ogs_pool_free(&mme_gn_teid_pool, mme_ue->gn.mme_gn_teid_node);
     ogs_pool_id_free(&mme_ue_pool, mme_ue);
-
     ogs_info("[Removed] Number of MME-UEs is now %d",
             ogs_list_count(&self.mme_ue_list));
 }
@@ -4113,13 +4368,60 @@ mme_ue_t *mme_ue_find_by_message(const ogs_nas_eps_message_t *message)
     return mme_ue;
 }
 
-int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
+static const char *mme_ue_imsi_source_name(mme_ue_imsi_source_e source)
+{
+    switch (source) {
+    case MME_UE_IMSI_FROM_ATTACH_REQUEST:
+        return "ATTACH_REQUEST";
+    case MME_UE_IMSI_FROM_IDENTITY_RESPONSE:
+        return "IDENTITY_RESPONSE";
+    case MME_UE_IMSI_FROM_SGSN_CONTEXT_RESPONSE:
+        return "SGSN_CONTEXT_RESPONSE";
+    }
+    return "UNKNOWN";
+}
+
+static const char *mme_ue_emm_state_name(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_de_registered))
+        return "DE_REGISTERED";
+    if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_authentication))
+        return "AUTHENTICATION";
+    if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_security_mode))
+        return "SECURITY_MODE";
+    if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_initial_context_setup))
+        return "INITIAL_CONTEXT_SETUP";
+    if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_registered))
+        return "REGISTERED";
+    if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
+        return "UE_CONTEXT_WILL_REMOVE";
+    if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_exception))
+        return "EXCEPTION";
+
+    return "OTHER";
+}
+
+int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd,
+        mme_ue_imsi_source_e source)
 {
     mme_ue_t *old_mme_ue = NULL;
     mme_sess_t *old_sess = NULL;
     mme_bearer_t *old_bearer = NULL;
     sgw_ue_t *sgw_ue = NULL, *old_sgw_ue = NULL;
+    uint16_t target_bitmap_before = 0;
+    bool target_had_imsi = false;
+    char target_imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    int i;
     ogs_assert(mme_ue && imsi_bcd);
+
+    /*
+     * Remember who this context was before the overwrite below - by the
+     * time the migration logs, mme_ue->imsi_bcd is already the new IMSI.
+     */
+    target_had_imsi = MME_UE_HAVE_IMSI(mme_ue) ? true : false;
+    ogs_cpystrn(target_imsi_bcd, mme_ue->imsi_bcd, OGS_MAX_IMSI_BCD_LEN+1);
 
     /*
      * Issues: #4357
@@ -4137,8 +4439,8 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
      * in mme_state_operational().
      */
     if (mme_ue->imsi_len != 0)
-        ogs_hash_set(mme_self()->imsi_ue_hash,
-                mme_ue->imsi, mme_ue->imsi_len, NULL);
+        ogs_hash_unset_if_owner(mme_self()->imsi_ue_hash,
+                mme_ue->imsi, mme_ue->imsi_len, mme_ue);
 
     ogs_cpystrn(mme_ue->imsi_bcd, imsi_bcd, OGS_MAX_IMSI_BCD_LEN+1);
     ogs_bcd_to_buffer(mme_ue->imsi_bcd, mme_ue->imsi, &mme_ue->imsi_len);
@@ -4149,21 +4451,61 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
         /* Check if OLD mme_ue_t is different with NEW mme_ue_t */
         if (ogs_pool_index(&mme_ue_pool, mme_ue) !=
             ogs_pool_index(&mme_ue_pool, old_mme_ue)) {
-            ogs_warn("[%s] OLD UE Context Release and old enb ue id[%d]", mme_ue->imsi_bcd, old_mme_ue->enb_ue_id);
+            ogs_warn("[%s] OLD UE Context Release, old enb ue id[%d]",
+                    mme_ue->imsi_bcd, old_mme_ue->enb_ue_id);
+
+            /*
+             * Who reached the OLD UE context migration?
+             *
+             *   ATTACH_REQUEST         identity is in the message
+             *   IDENTITY_RESPONSE      identity arrives mid-procedure
+             *   SGSN_CONTEXT_RESPONSE  identity arrives mid-procedure
+             *
+             * The migration hands session, bearer, EBI and SGW-S11-TEID
+             * ownership from one context to another. Replacing it means
+             * keeping the context that owns the identity and moving the
+             * S1 association instead, so first we need to know which
+             * callers actually get here, and in what state.
+             */
+            ogs_warn("[MIGRATION-TRACK] source[%s] "
+                    "target_ue_id[%d] target_imsi[%s] target_state[%s] "
+                    "target_sessions[%d] target_bitmap[0x%04x]",
+                    mme_ue_imsi_source_name(source),
+                    mme_ue->id,
+                    target_had_imsi ? target_imsi_bcd : "Unknown",
+                    mme_ue_emm_state_name(mme_ue),
+                    ogs_list_count(&mme_ue->sess_list),
+                    mme_ue->ebi_bitmap);
+            ogs_warn("[MIGRATION-TRACK]     "
+                    "old_ue_id[%d] old_imsi[%s] old_state[%s] "
+                    "old_sessions[%d] old_bitmap[0x%04x] "
+                    "old_ecm_connected[%d]",
+                    old_mme_ue->id,
+                    old_mme_ue->imsi_bcd,
+                    mme_ue_emm_state_name(old_mme_ue),
+                    ogs_list_count(&old_mme_ue->sess_list),
+                    old_mme_ue->ebi_bitmap,
+                    ECM_CONNECTED(old_mme_ue) ? 1 : 0);
             if (ECM_CONNECTED(old_mme_ue)) {
-                enb_ue_t *enb_ue = enb_ue_find_by_id(old_mme_ue->enb_ue_id);
-                /* Implcit S1 release */
-                ogs_warn("[%s] Implicit S1 release, old enb ue id[%d]", mme_ue->imsi_bcd, old_mme_ue->enb_ue_id);
-                if (enb_ue) {
-                    ogs_warn("[%s]    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
-                            old_mme_ue->imsi_bcd,
-                            enb_ue->enb_ue_s1ap_id,
-                            enb_ue->mme_ue_s1ap_id);
-                    enb_ue_remove(enb_ue);
-                } else {
-                    ogs_error("[%s] S1 Context has already been removed",
-                                old_mme_ue->imsi_bcd);
-                }
+                /*
+                 * Keep the old S1 context until the new attach/TAU procedure
+                 * is authenticated. CLEAR_S1_CONTEXT(mme_ue) will then send
+                 * UEContextReleaseCommand to the old E-UTRAN context.
+                 *
+                 * The hold is recorded in mme_ue rather than old_mme_ue,
+                 * which is removed below once its sessions have been moved
+                 * across.
+                 */
+                ogs_warn("[%s] Holding old S1 context", mme_ue->imsi_bcd);
+                HOLDING_S1_CONTEXT_FOR(mme_ue, old_mme_ue);
+
+                /*
+                 * Unlike the ordinary callers, nothing associates a new S1
+                 * context with old_mme_ue after this, so clear it here
+                 * rather than in the macro. ECM_IDLE(old_mme_ue) has to
+                 * see the context as released.
+                 */
+                old_mme_ue->enb_ue_id = OGS_INVALID_POOL_ID;
             }
 
     /*
@@ -4179,6 +4521,13 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
      * Another GTPv2-C Transaction can cause fatal errors.
      */
             /* Phase-1 : Change MME-UE Context in Session Context */
+            target_bitmap_before = mme_ue->ebi_bitmap;
+            ogs_info("[EBI-TRACK] UE-MIGRATION begin: "
+                    "old_ue_id[%d] new_ue_id[%d] "
+                    "old_bitmap[0x%04x] new_bitmap[0x%04x] IMSI[%s]",
+                    old_mme_ue->id, mme_ue->id,
+                    old_mme_ue->ebi_bitmap, mme_ue->ebi_bitmap,
+                    mme_ue->imsi_bcd);
             ogs_list_for_each(&old_mme_ue->sess_list, old_sess) {
                 ogs_list_for_each(&old_sess->bearer_list, old_bearer) {
                     old_bearer->mme_ue_id = mme_ue->id;
@@ -4186,14 +4535,68 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
                     if (mme_ebi_reserve(mme_ue, old_bearer->ebi) == OGS_OK)
                         ogs_info("Bearer reserved (EBI=%d IMSI=%s)",
                                 old_bearer->ebi, mme_ue->imsi_bcd);
-                    else
-                        ogs_error("Failed to reserve bearer (EBI=%d IMSI=%s)",
-                                old_bearer->ebi, mme_ue->imsi_bcd);
+                    else {
+                        /*
+                         * Interpreting the collision:
+                         *   - EBI bit set in target_bitmap_before:
+                         *     the target UE carried a stale reservation
+                         *     from before this migration.
+                         *   - EBI bit set only in target_bitmap_now:
+                         *     the source held duplicate bearer contexts
+                         *     with the same EBI (cross-check with the
+                         *     source dump's duplicate field).
+                         *
+                         * The target UE is NOT dumped here: its
+                         * sess_list is still empty before Phase-2, so a
+                         * SUMMARY would misreport the legitimately
+                         * migrated reservations as bitmap_only.
+                         */
+                        ogs_error("[EBI-TRACK] UE-MIGRATION reserve failed "
+                                "EBI[%d] target_bitmap_before[0x%04x] "
+                                "target_bitmap_now[0x%04x] IMSI[%s]",
+                                old_bearer->ebi,
+                                target_bitmap_before,
+                                mme_ue->ebi_bitmap,
+                                mme_ue->imsi_bcd);
+                        mme_ebi_track_dump(old_mme_ue,
+                                "UE-MIGRATION-SOURCE-RESERVE-FAIL");
+                    }
                 }
                 old_sess->mme_ue_id = mme_ue->id;
             }
+            ogs_info("[EBI-TRACK] UE-MIGRATION end: new_bitmap[0x%04x]",
+                    mme_ue->ebi_bitmap);
 
             /* Phase-2 : Move Session Context from OLD to NEW MME-UE Context */
+            ogs_assert(ogs_list_empty(&mme_ue->sess_list));
+
+            /*
+             * Preserve subscription data when migrating retained PDNs, even
+             * when the target already has a subscription but no PDNs.
+             *
+             * Keeping PDNs through GUTI re-attach authentication (#4577) also
+             * requires their APN data to survive old-UE removal. Commit
+             * d86e013f fixed this by transferring the subscription list and
+             * rebinding sess->session, which pointed into the old UE's array.
+             *
+             * mme_sess_set_session() now gives each PDN its own configuration
+             * and APN name. These allocations stay with the same PDN objects
+             * during migration, so pointer rebinding is no longer needed.
+             *
+             * The subscription list and default APN identifier must still
+             * move to the new UE. Free the target's previous subscription
+             * first, then clear the old count after the shallow copy so
+             * old-UE removal cannot free the transferred APN names.
+             */
+            ogs_assert(old_mme_ue->num_of_session <= OGS_MAX_NUM_OF_SESS);
+            mme_session_remove_all(mme_ue);
+            mme_ue->num_of_session = old_mme_ue->num_of_session;
+            mme_ue->context_identifier = old_mme_ue->context_identifier;
+            for (i = 0; i < mme_ue->num_of_session; i++) {
+                mme_ue->session[i] = old_mme_ue->session[i];
+            }
+            old_mme_ue->num_of_session = 0;
+
             memcpy(&mme_ue->sess_list,
                     &old_mme_ue->sess_list, sizeof(mme_ue->sess_list));
 
@@ -4208,21 +4611,19 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
             {
                 ogs_error("[%s] old_sgw_ue not found for sgw_ue_id=%d",
                                mme_ue->imsi_bcd, old_mme_ue->sgw_ue_id);
-                sgw_ue->sgw_s11_teid = OGS_INVALID_POOL_ID; //storing the invalid poolid to s11_teid when old_sgw_ue is NULL 
-            } 
-            else 
+                sgw_ue->sgw_s11_teid = OGS_INVALID_POOL_ID; //storing the invalid poolid to s11_teid when old_sgw_ue is NULL
+            }
+            else
             {
                 sgw_ue->sgw_s11_teid = old_sgw_ue->sgw_s11_teid;
             }
-           
+
           mme_ue_remove(old_mme_ue);
         }
     }
 
-    if (mme_ue->imsi_len != 0)
-        ogs_hash_set(mme_self()->imsi_ue_hash,
-                mme_ue->imsi, mme_ue->imsi_len, NULL);
-
+    /* Register new IMSI in hash.
+     * Old IMSI hash entry was already removed at the top of this function. */
     ogs_hash_set(self.imsi_ue_hash, mme_ue->imsi, mme_ue->imsi_len, mme_ue);
 
     mme_ue->hssmap = mme_hssmap_find_by_imsi_bcd(mme_ue->imsi_bcd);
@@ -4350,11 +4751,23 @@ int mme_ue_xact_count(mme_ue_t *mme_ue, uint8_t org)
 
 void enb_ue_associate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
 {
+    mme_enb_t *enb_obj = NULL;
+
     ogs_assert(mme_ue);
     ogs_assert(enb_ue);
 
     mme_ue->enb_ue_id = enb_ue->id;
     enb_ue->mme_ue_id = mme_ue->id;
+
+    /* Capture the eNB-ID so /ue-info can still report the last-attached
+     * cell after the enb_ue_t is freed at UE Context Release.  Skip
+     * silently if the eNB hasn't completed S1 Setup with an enb_id IE;
+     * a later association on a properly-set-up eNB will overwrite. */
+    enb_obj = mme_enb_find_by_id(enb_ue->enb_id);
+    if (enb_obj && enb_obj->enb_id_presence) {
+        mme_ue->last_enb_id = enb_obj->enb_id;
+        mme_ue->last_enb_id_presence = true;
+    }
 }
 
 void enb_ue_deassociate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
@@ -4517,6 +4930,10 @@ mme_sess_t *mme_sess_add(mme_ue_t *mme_ue, uint8_t pti)
 
     sess->mme_ue_id = mme_ue->id;
     sess->pti = pti;
+    /* Explicit for clarity: OGS_INVALID_POOL_ID happens to be 0, so the
+     * pool calloc already guarantees this, but the DNS selection code
+     * depends on it and must not break if the constant ever changes. */
+    sess->dns_id = OGS_INVALID_POOL_ID;
 
     bearer = mme_bearer_add(sess);
     ogs_assert(bearer);
@@ -4545,6 +4962,10 @@ void mme_sess_remove(mme_sess_t *sess)
     OGS_TLV_CLEAR_DATA(&sess->pgw_pco);
     OGS_TLV_CLEAR_DATA(&sess->pgw_epco);
 
+    mme_dns_sess_clear(sess);
+
+    mme_sess_set_session(sess, NULL);
+
     ogs_pool_id_free(&mme_sess_pool, sess);
 
     stats_remove_mme_session();
@@ -4562,6 +4983,41 @@ void mme_sess_remove_all(mme_ue_t *mme_ue)
 
         sess = next_sess;
     }
+}
+
+void mme_sess_set_session(mme_sess_t *sess, const ogs_session_t *session)
+{
+    ogs_session_t *new_session = NULL;
+
+    ogs_assert(sess);
+
+    if (session) {
+        ogs_assert(session->name);
+        new_session = ogs_calloc(1, sizeof(*new_session));
+        ogs_assert(new_session);
+        new_session->name = ogs_strdup(session->name);
+        ogs_assert(new_session->name);
+
+        /* Copy only the EPC fields populated by S6a/Gn. Framed routes are
+         * delivered directly to the SMF and are not owned by the MME. */
+        new_session->context_identifier = session->context_identifier;
+        new_session->session_type = session->session_type;
+        new_session->qos = session->qos;
+        new_session->ambr = session->ambr;
+        new_session->ue_ip = session->ue_ip;
+        new_session->smf_ip = session->smf_ip;
+        memcpy(new_session->charging_characteristics,
+                session->charging_characteristics,
+                sizeof(new_session->charging_characteristics));
+        new_session->charging_characteristics_presence =
+            session->charging_characteristics_presence;
+    }
+
+    if (sess->session) {
+        ogs_free(sess->session->name);
+        ogs_free(sess->session);
+    }
+    sess->session = new_session;
 }
 
 mme_sess_t *mme_sess_find_by_pti(const mme_ue_t *mme_ue, uint8_t pti)
@@ -4606,7 +5062,7 @@ mme_sess_t *mme_sess_find_by_apn(const mme_ue_t *mme_ue, const char *apn)
 
     return NULL;
 }
-ogs_session_t *mme_session_add_allow_duplicate_apn(mme_ue_t *mme_ue, const char *apn, uint8_t session_type) { 
+ogs_session_t *mme_session_add_allow_duplicate_apn(mme_ue_t *mme_ue, const char *apn, uint8_t session_type) {
 //this function is using for adding the duplicate apn
     if (mme_ue->num_of_session >= OGS_MAX_NUM_OF_SESS) { //if pdn's more than 4, we can't allow to add the pdn's
         ogs_error("Cannot add more PDNs for UE[%s], max [%d] reached",
@@ -4619,7 +5075,7 @@ ogs_session_t *mme_session_add_allow_duplicate_apn(mme_ue_t *mme_ue, const char 
 
     new_session->name = ogs_strdup(apn);
     if (!new_session->name) return NULL;
-    new_session->context_identifier = mme_ue->num_of_session + 1; //adding new pdn session for the same apn 
+    new_session->context_identifier = mme_ue->num_of_session + 1; //adding new pdn session for the same apn
     new_session->session_type = session_type;  //copying the session type like ipv4 and ipv6 etc
     mme_ue->num_of_session++;
     return new_session;
@@ -4630,7 +5086,7 @@ void mme_session_remove_by_apn(mme_ue_t *mme_ue, const char *apn) {
     for (i = 0; i < mme_ue->num_of_session; i++) {
         if (mme_ue->session[i].name &&
             ogs_strcasecmp(mme_ue->session[i].name, apn) == 0) {
-            ogs_info("Removing stale PDN session for APN: %s", apn); 
+            ogs_info("Removing stale PDN session for APN: %s", apn);
             if (mme_ue->session[i].name)
                 ogs_free(mme_ue->session[i].name);
             memmove(&mme_ue->session[i], &mme_ue->session[i + 1],
@@ -4695,7 +5151,11 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
         return NULL;
     }
 
-    ogs_info("Bearer added (EBI=%d IMSI=%s)", bearer->ebi, mme_ue->imsi_bcd);
+    ogs_info("[EBI-TRACK] Bearer added (EBI=%d ue_id=%d IMSI=%s "
+            "bitmap=0x%04x)",
+            bearer->ebi, mme_ue->id, mme_ue->imsi_bcd, mme_ue->ebi_bitmap);
+
+    bearer->trace_created = ogs_time_now();
 
     bearer->mme_ue_id = mme_ue->id;
     bearer->sess_id = sess->id;
@@ -4727,7 +5187,14 @@ void mme_bearer_remove(mme_bearer_t *bearer)
     sess = mme_sess_find_by_id(bearer->sess_id);
     ogs_assert(sess);
 
-    ogs_info("Bearer removed (EBI=%d IMSI=%s)", bearer->ebi, mme_ue->imsi_bcd);
+    ogs_info("[EBI-TRACK] Bearer removing (EBI=%d ue_id=%d IMSI=%s ESM=%s "
+            "AGE=%lldms bitmap_before=0x%04x)",
+            bearer->ebi, mme_ue->id, mme_ue->imsi_bcd,
+            mme_ebi_track_esm_state_name(bearer),
+            bearer->trace_created ? (long long)
+                ogs_time_to_msec(ogs_time_now() - bearer->trace_created) :
+                -1LL,
+            mme_ue->ebi_bitmap);
 
     memset(&e, 0, sizeof(e));
     e.bearer_id = bearer->id;
@@ -5056,6 +5523,7 @@ void mme_session_remove_all(mme_ue_t *mme_ue)
         if (mme_ue->session[i].name)
             ogs_free(mme_ue->session[i].name);
     }
+    memset(mme_ue->session, 0, sizeof(mme_ue->session));
 
     mme_ue->num_of_session = 0;
 }
@@ -5244,6 +5712,113 @@ int mme_m_tmsi_free(mme_m_tmsi_t *m_tmsi)
  * Bitmap-based tracking avoids ownership issues with pool-internal
  * pointers (ebi_node) and supports safe EBI reservation.
  */
+/* [EBI-TRACK] instrumentation ------------------------------------------
+ *
+ * Debug aid for the 2026-07-19 production MME crash:
+ *   ERROR: No available EBI (range 5-15)
+ *   ERROR: Bearer add failed: EBI pool exhausted
+ *   FATAL: mme_s11_handle_create_bearer_request: Assertion `bearer' failed.
+ *
+ * Shortly before the crash, the same UE retained bearer contexts
+ * (EBI 10..15) outside ESM-ACTIVE state ("No active EPS bearer [n]").
+ * Those contexts, or their corresponding EBI bitmap reservations,
+ * were apparently not released before subsequent Create Bearer
+ * Requests exhausted the per-UE EBI range.  These helpers surface
+ * every EBI state change and dump all bearer contexts of a UE so
+ * the leak path can be identified, not to prove a presumed cause.
+ */
+const char *mme_ebi_track_esm_state_name(mme_bearer_t *bearer)
+{
+    ogs_assert(bearer);
+
+    if (OGS_FSM_CHECK(&bearer->sm, esm_state_active))
+        return "ACTIVE";
+    if (OGS_FSM_CHECK(&bearer->sm, esm_state_inactive))
+        return "INACTIVE";
+    if (OGS_FSM_CHECK(&bearer->sm, esm_state_pdn_will_disconnect))
+        return "PDN-WILL-DISCONNECT";
+    if (OGS_FSM_CHECK(&bearer->sm, esm_state_pdn_did_disconnect))
+        return "PDN-DID-DISCONNECT";
+    if (OGS_FSM_CHECK(&bearer->sm, esm_state_bearer_deactivated))
+        return "BEARER-DEACTIVATED";
+    if (OGS_FSM_CHECK(&bearer->sm, esm_state_exception))
+        return "EXCEPTION";
+
+    return "UNKNOWN";
+}
+
+void mme_ebi_track_dump(mme_ue_t *mme_ue, const char *reason)
+{
+    mme_sess_t *sess = NULL;
+    mme_bearer_t *bearer = NULL;
+    ogs_time_t now = ogs_time_now();
+    int num_bearer = 0;
+    uint8_t ebi;
+    uint16_t ebi_mask = 0;
+    uint16_t bearer_bitmap = 0, duplicate_bitmap = 0;
+    uint16_t bitmap_only, bearer_only;
+
+    ogs_assert(mme_ue);
+
+    for (ebi = MIN_EPS_BEARER_ID; ebi <= MAX_EPS_BEARER_ID; ebi++)
+        ebi_mask |= (1U << ebi);
+
+    ogs_error("[EBI-TRACK] ===== EBI DUMP (%s) ue_id[%d] IMSI[%s] "
+            "bitmap[0x%04x] =====",
+            reason ? reason : "-",
+            mme_ue->id, mme_ue->imsi_bcd, mme_ue->ebi_bitmap);
+
+    ogs_list_for_each(&mme_ue->sess_list, sess) {
+        ogs_list_for_each(&sess->bearer_list, bearer) {
+            num_bearer++;
+            if (bearer->ebi >= MIN_EPS_BEARER_ID &&
+                bearer->ebi <= MAX_EPS_BEARER_ID) {
+                uint16_t ebi_bit = (uint16_t)(1U << bearer->ebi);
+
+                if (bearer_bitmap & ebi_bit)
+                    duplicate_bitmap |= ebi_bit;
+                bearer_bitmap |= ebi_bit;
+            } else {
+                /* Diagnostic code must not crash on a corrupted
+                 * context: guard the shift below against out-of-range
+                 * EBI values instead of computing (1U << ebi) blindly. */
+                ogs_error("[EBI-TRACK]   INVALID EBI[%d] "
+                        "outside range[%d-%d]",
+                        bearer->ebi,
+                        MIN_EPS_BEARER_ID, MAX_EPS_BEARER_ID);
+            }
+            ogs_error("[EBI-TRACK]   EBI[%d] APN[%s] ESM[%s] AGE[%lldms] "
+                    "ENB_S1U_TEID[0x%x] SGW_S1U_TEID[0x%x]",
+                    bearer->ebi,
+                    (sess->session && sess->session->name) ?
+                        sess->session->name : "-",
+                    mme_ebi_track_esm_state_name(bearer),
+                    bearer->trace_created ? (long long)
+                        ogs_time_to_msec(now - bearer->trace_created) : -1LL,
+                    bearer->enb_s1u_teid, bearer->sgw_s1u_teid);
+        }
+    }
+
+    /* Reconcile the EBI bitmap against the actual bearer contexts:
+     *   bitmap_only  != 0 : EBI bit set but no bearer context
+     *                       (missing mme_ebi_free() or migration bug)
+     *   bearer_only  != 0 : bearer context exists but EBI bit clear
+     *                       (freed while the context survived)
+     *   duplicate    != 0 : two bearer contexts share the same EBI
+     *   all zero + full   : genuine bearer context accumulation */
+    bitmap_only = (mme_ue->ebi_bitmap & ebi_mask) & ~bearer_bitmap;
+    bearer_only = bearer_bitmap & ~(mme_ue->ebi_bitmap & ebi_mask);
+
+    ogs_error("[EBI-TRACK] SUMMARY bitmap[0x%04x] bearer_bitmap[0x%04x] "
+            "bitmap_only[0x%04x] bearer_only[0x%04x] duplicate[0x%04x]",
+            mme_ue->ebi_bitmap, bearer_bitmap,
+            bitmap_only, bearer_only, duplicate_bitmap);
+
+    ogs_error("[EBI-TRACK] ===== END DUMP: %d bearer context(s) =====",
+            num_bearer);
+}
+/* --------------------------------------------------------------------- */
+
 uint8_t mme_ebi_alloc(mme_ue_t *mme_ue)
 {
     uint8_t ebi;
@@ -5253,14 +5828,17 @@ uint8_t mme_ebi_alloc(mme_ue_t *mme_ue)
     for (ebi = MIN_EPS_BEARER_ID; ebi <= MAX_EPS_BEARER_ID; ebi++) {
 
         if (!(mme_ue->ebi_bitmap & (1 << ebi))) {
-            mme_ue->ebi_bitmap |= (1 << ebi);
-            ogs_debug("EBI allocated [%d]", ebi);
+            mme_ue->ebi_bitmap |= (1U << ebi);
+            ogs_info("[EBI-TRACK] EBI allocated [%d] ue_id[%d] IMSI[%s] "
+                    "bitmap[0x%04x]",
+                    ebi, mme_ue->id, mme_ue->imsi_bcd, mme_ue->ebi_bitmap);
             return ebi;
         }
     }
 
     ogs_error("No available EBI (range %d-%d)",
             MIN_EPS_BEARER_ID, MAX_EPS_BEARER_ID);
+    mme_ebi_track_dump(mme_ue, "ALLOC-FAIL");
 
     return INVALID_EPS_BEARER_ID; /* no available EBI */
 }
@@ -5274,9 +5852,21 @@ int mme_ebi_free(mme_ue_t *mme_ue, int ebi)
         return OGS_ERROR;
     }
 
-    mme_ue->ebi_bitmap &= ~(1 << ebi);
+    if (!(mme_ue->ebi_bitmap & (1U << ebi))) {
+        /* Not necessarily a double free: a missed bitmap migration or
+         * an ownership change after a failed reservation also lands
+         * here.  Either way this must not happen in normal operation,
+         * so dump the full context. */
+        ogs_error("[EBI-TRACK] FREE-UNRESERVED EBI[%d] not marked "
+                "allocated ue_id[%d] IMSI[%s] bitmap[0x%04x]",
+                ebi, mme_ue->id, mme_ue->imsi_bcd, mme_ue->ebi_bitmap);
+        mme_ebi_track_dump(mme_ue, "FREE-UNRESERVED");
+    }
 
-    ogs_debug("EBI freed [%d]", ebi);
+    mme_ue->ebi_bitmap &= ~(1U << ebi);
+
+    ogs_info("[EBI-TRACK] EBI freed [%d] ue_id[%d] IMSI[%s] bitmap[0x%04x]",
+            ebi, mme_ue->id, mme_ue->imsi_bcd, mme_ue->ebi_bitmap);
 
     return OGS_OK;
 }
@@ -5290,13 +5880,22 @@ int mme_ebi_reserve(mme_ue_t *mme_ue, int ebi)
         return OGS_ERROR;
     }
 
-    if (mme_ue->ebi_bitmap & (1 << ebi)) {
-        ogs_error("EBI [%d] already reserved", ebi);
+    if (mme_ue->ebi_bitmap & (1U << ebi)) {
+        /* No mme_ebi_track_dump() here: the only caller is the
+         * Phase-1 UE migration loop, where the target UE's sess_list
+         * is still empty while its bitmap already holds legitimately
+         * migrated reservations -- a dump SUMMARY at this point would
+         * misreport those pending bits as bitmap_only. */
+        ogs_error("[EBI-TRACK] RESERVE-COLLISION EBI[%d] already reserved "
+                "ue_id[%d] IMSI[%s] bitmap[0x%04x]",
+                ebi, mme_ue->id, mme_ue->imsi_bcd, mme_ue->ebi_bitmap);
         return OGS_ERROR;
     }
 
-    mme_ue->ebi_bitmap |= (1 << ebi);
-    ogs_debug("EBI reserved [%d]", ebi);
+    mme_ue->ebi_bitmap |= (1U << ebi);
+    ogs_info("[EBI-TRACK] EBI reserved [%d] ue_id[%d] IMSI[%s] "
+            "bitmap[0x%04x]",
+            ebi, mme_ue->id, mme_ue->imsi_bcd, mme_ue->ebi_bitmap);
     return OGS_OK;
 }
 
@@ -5341,6 +5940,11 @@ void mme_ue_save_memento(mme_ue_t *mme_ue, mme_ue_memento_t *memento)
     ogs_assert(mme_ue);
     ogs_assert(memento);
 
+    memento->ue_ksi = mme_ue->nas_eps.ue.ksi;
+    memento->ue_tsc = mme_ue->nas_eps.ue.tsc;
+    memento->mme_ksi = mme_ue->nas_eps.mme.ksi;
+    memento->mme_tsc = mme_ue->nas_eps.mme.tsc;
+
     memcpy(&memento->ue_network_capability,
             &mme_ue->ue_network_capability,
             sizeof(memento->ue_network_capability));
@@ -5361,6 +5965,7 @@ void mme_ue_save_memento(mme_ue_t *mme_ue, mme_ue_memento_t *memento)
            OGS_SHA256_DIGEST_SIZE / 2);
     memento->dl_count = mme_ue->dl_count;
     memento->ul_count = mme_ue->ul_count.i32;
+    memento->ul_count_accepted = mme_ue->ul_count_accepted;
     memcpy(memento->kenb, mme_ue->kenb, OGS_SHA256_DIGEST_SIZE);
     memcpy(memento->hash_mme, mme_ue->hash_mme, OGS_HASH_MME_LEN);
     memento->nonceue = mme_ue->nonceue;
@@ -5377,6 +5982,11 @@ void mme_ue_restore_memento(mme_ue_t *mme_ue, const mme_ue_memento_t *memento)
 {
     ogs_assert(mme_ue);
     ogs_assert(memento);
+
+    mme_ue->nas_eps.ue.ksi = memento->ue_ksi;
+    mme_ue->nas_eps.ue.tsc = memento->ue_tsc;
+    mme_ue->nas_eps.mme.ksi = memento->mme_ksi;
+    mme_ue->nas_eps.mme.tsc = memento->mme_tsc;
 
     memcpy(&mme_ue->ue_network_capability,
             &memento->ue_network_capability,
@@ -5398,6 +6008,7 @@ void mme_ue_restore_memento(mme_ue_t *mme_ue, const mme_ue_memento_t *memento)
            OGS_SHA256_DIGEST_SIZE / 2);
     mme_ue->dl_count = memento->dl_count;
     mme_ue->ul_count.i32 = memento->ul_count;
+    mme_ue->ul_count_accepted = memento->ul_count_accepted;
     memcpy(mme_ue->kenb, memento->kenb, OGS_SHA256_DIGEST_SIZE);
     memcpy(mme_ue->hash_mme, memento->hash_mme, OGS_HASH_MME_LEN);
     mme_ue->nonceue = memento->nonceue;

@@ -1,25 +1,25 @@
 /*
  * sor_info.h
  *
- * 
+ * Contains steering of roaming information
  */
 
 #ifndef _OpenAPI_sor_info_H_
 #define _OpenAPI_sor_info_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_sor_info_s OpenAPI_sor_info_t;
 #include "steering_container.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_sor_info_s OpenAPI_sor_info_t;
-typedef struct OpenAPI_sor_info_s {
+struct OpenAPI_sor_info_s {
     struct OpenAPI_steering_container_s *steering_container;
     int ack_ind;
     char *sor_mac_iausf;
@@ -27,11 +27,13 @@ typedef struct OpenAPI_sor_info_s {
     char *provisioning_time;
     char *sor_transparent_container;
     char *sor_cmci;
+    char *sor_snpn_si;
+    char *sor_snpn_si_ls;
     bool is_store_sor_cmci_in_me;
     int store_sor_cmci_in_me;
     bool is_usim_support_of_sor_cmci;
     int usim_support_of_sor_cmci;
-} OpenAPI_sor_info_t;
+};
 
 OpenAPI_sor_info_t *OpenAPI_sor_info_create(
     OpenAPI_steering_container_t *steering_container,
@@ -41,6 +43,8 @@ OpenAPI_sor_info_t *OpenAPI_sor_info_create(
     char *provisioning_time,
     char *sor_transparent_container,
     char *sor_cmci,
+    char *sor_snpn_si,
+    char *sor_snpn_si_ls,
     bool is_store_sor_cmci_in_me,
     int store_sor_cmci_in_me,
     bool is_usim_support_of_sor_cmci,

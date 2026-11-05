@@ -8,20 +8,20 @@
 #define _OpenAPI_guami_list_cond_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_guami_list_cond_s OpenAPI_guami_list_cond_t;
 #include "guami.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_guami_list_cond_s OpenAPI_guami_list_cond_t;
-typedef struct OpenAPI_guami_list_cond_s {
+struct OpenAPI_guami_list_cond_s {
     OpenAPI_list_t *guami_list;
-} OpenAPI_guami_list_cond_t;
+};
 
 OpenAPI_guami_list_cond_t *OpenAPI_guami_list_cond_create(
     OpenAPI_list_t *guami_list

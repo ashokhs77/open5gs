@@ -34,7 +34,8 @@ ogs_sbi_request_t *amf_nudm_uecm_build_registration(
 
     memset(&message, 0, sizeof(message));
     message.h.method = (char *)OGS_SBI_HTTP_METHOD_PUT;
-    message.h.service.name = (char *)OGS_SBI_SERVICE_NAME_NUDM_UECM;
+    message.h.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nudm_uecm);
     message.h.api.version = (char *)OGS_SBI_API_V1;
     message.h.resource.component[0] = amf_ue->supi;
     message.h.resource.component[1] =
@@ -112,7 +113,8 @@ ogs_sbi_request_t *amf_nudm_uecm_build_registration_delete(
 
     memset(&message, 0, sizeof(message));
     message.h.method = (char *)OGS_SBI_HTTP_METHOD_PATCH;
-    message.h.service.name = (char *)OGS_SBI_SERVICE_NAME_NUDM_UECM;
+    message.h.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nudm_uecm);
     message.h.api.version = (char *)OGS_SBI_API_V1;
     message.h.resource.component[0] = amf_ue->supi;
     message.h.resource.component[1] =
@@ -156,10 +158,53 @@ ogs_sbi_request_t *amf_nudm_sdm_build_get(amf_ue_t *amf_ue, void *data)
 
     memset(&message, 0, sizeof(message));
     message.h.method = (char *)OGS_SBI_HTTP_METHOD_GET;
-    message.h.service.name = (char *)OGS_SBI_SERVICE_NAME_NUDM_SDM;
+    message.h.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nudm_sdm);
     message.h.api.version = (char *)OGS_SBI_API_V2;
     message.h.resource.component[0] = amf_ue->supi;
     message.h.resource.component[1] = data;
+
+    message.param.plmn_id_presence = true;
+    memcpy(&message.param.plmn_id, &amf_ue->nr_tai.plmn_id,
+            sizeof(message.param.plmn_id));
+
+    request = ogs_sbi_build_request(&message);
+    ogs_expect(request);
+
+    return request;
+}
+
+ogs_sbi_request_t *amf_nudm_sdm_build_get_datasets(
+        amf_ue_t *amf_ue, void *data)
+{
+    ogs_sbi_message_t message;
+    ogs_sbi_request_t *request = NULL;
+
+    ogs_assert(amf_ue);
+    ogs_assert(amf_ue->supi);
+
+    memset(&message, 0, sizeof(message));
+    message.h.method = (char *)OGS_SBI_HTTP_METHOD_GET;
+    message.h.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nudm_sdm);
+    message.h.api.version = (char *)OGS_SBI_API_V2;
+    message.h.resource.component[0] = amf_ue->supi;
+
+    /*
+     * Retrieve Access and Mobility + SMF Selection subscription data
+     * in a single request:
+     *
+     *   GET /nudm-sdm/v2/{supi}?dataset-names=AM,SMF_SEL
+     *
+     * These are the two datasets carried by ProvisionedDataSets. UE
+     * context in SMF data is retrieved separately afterwards because it
+     * is not part of ProvisionedDataSets.
+     */
+    message.param.dataset_names[0] =
+        (char *)OGS_SBI_PARAM_DATASET_NAME_AM;
+    message.param.dataset_names[1] =
+        (char *)OGS_SBI_PARAM_DATASET_NAME_SMF_SEL;
+    message.param.num_of_dataset_names = 2;
 
     message.param.plmn_id_presence = true;
     memcpy(&message.param.plmn_id, &amf_ue->nr_tai.plmn_id,
@@ -189,7 +234,8 @@ ogs_sbi_request_t *amf_nudm_sdm_build_subscription(amf_ue_t *amf_ue, void *data)
 
     memset(&message, 0, sizeof(message));
     message.h.method = (char *)OGS_SBI_HTTP_METHOD_POST;
-    message.h.service.name = (char *)OGS_SBI_SERVICE_NAME_NUDM_SDM;
+    message.h.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nudm_sdm);
     message.h.api.version = (char *)OGS_SBI_API_V2;
     message.h.resource.component[0] = amf_ue->supi;
     message.h.resource.component[1] =

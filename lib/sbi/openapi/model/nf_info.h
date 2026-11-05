@@ -8,20 +8,20 @@
 #define _OpenAPI_nf_info_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_nf_info_s OpenAPI_nf_info_t;
 #include "nf_type.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_nf_info_s OpenAPI_nf_info_t;
-typedef struct OpenAPI_nf_info_s {
+struct OpenAPI_nf_info_s {
     OpenAPI_nf_type_e nf_type;
-} OpenAPI_nf_info_t;
+};
 
 OpenAPI_nf_info_t *OpenAPI_nf_info_create(
     OpenAPI_nf_type_e nf_type

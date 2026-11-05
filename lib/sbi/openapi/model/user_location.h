@@ -1,17 +1,18 @@
 /*
  * user_location.h
  *
- * At least one of eutraLocation, nrLocation and n3gaLocation shall be present. Several of them may be present. 
+ * At least one of eutraLocation, nrLocation, n3gaLocation, utraLocation, geraLocation and plmnLocation shall be present. Several of them may be present. 
  */
 
 #ifndef _OpenAPI_user_location_H_
 #define _OpenAPI_user_location_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_user_location_s OpenAPI_user_location_t;
 #include "eutra_location.h"
 #include "gera_location.h"
 #include "n3ga_location.h"
@@ -22,14 +23,13 @@
 extern "C" {
 #endif
 
-typedef struct OpenAPI_user_location_s OpenAPI_user_location_t;
-typedef struct OpenAPI_user_location_s {
+struct OpenAPI_user_location_s {
     struct OpenAPI_eutra_location_s *eutra_location;
     struct OpenAPI_nr_location_s *nr_location;
     struct OpenAPI_n3ga_location_s *n3ga_location;
     struct OpenAPI_utra_location_s *utra_location;
     struct OpenAPI_gera_location_s *gera_location;
-} OpenAPI_user_location_t;
+};
 
 OpenAPI_user_location_t *OpenAPI_user_location_create(
     OpenAPI_eutra_location_t *eutra_location,

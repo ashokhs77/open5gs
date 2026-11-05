@@ -947,9 +947,9 @@ int nas_5gs_send_gmm_reject(
         rv = nas_5gs_send_service_reject(ran_ue, amf_ue, gmm_cause);
         ogs_expect(rv == OGS_OK);
         break;
-    case OGS_NAS_5GS_DEREGISTRATION_REQUEST_FROM_UE: 
+    case OGS_NAS_5GS_DEREGISTRATION_REQUEST_FROM_UE:
         rv = OGS_OK;
-        ogs_warn("Skip GMM reject for Deregistration Request [%d]", amf_ue->nas.message_type); 
+        ogs_warn("Skip GMM reject for Deregistration Request [%d]", amf_ue->nas.message_type);
         break;
     default:
         ogs_error("Unknown message type [%d]", amf_ue->nas.message_type);

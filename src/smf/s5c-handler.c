@@ -205,8 +205,11 @@ uint8_t smf_s5c_handle_create_session_request(
         smf_ue->msisdn_len = req->msisdn.len;
         if (smf_ue->msisdn_len > 0) {
             memcpy(smf_ue->msisdn, req->msisdn.data, smf_ue->msisdn_len);
-            ogs_buffer_to_bcd(
-                smf_ue->msisdn, smf_ue->msisdn_len, smf_ue->msisdn_bcd);
+            if (!ogs_buffer_to_bcd(smf_ue->msisdn, smf_ue->msisdn_len,
+                        smf_ue->msisdn_bcd, sizeof(smf_ue->msisdn_bcd))) {
+                ogs_error("Invalid MSISDN [len:%d]", smf_ue->msisdn_len);
+                return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+            }
         }
     }
 
@@ -219,13 +222,12 @@ uint8_t smf_s5c_handle_create_session_request(
 
     if (sess->gtp_rat_type == OGS_GTP2_RAT_TYPE_EUTRAN) {
         /* User Location Inforation is mandatory only for E-UTRAN */
-        ogs_assert(req->user_location_information.presence);
         if (req->user_location_information.presence == 0) {
             ogs_error("No User Location Information(ULI)");
             return OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
         }
         decoded = ogs_gtp2_parse_uli(&uli, &req->user_location_information);
-        if (req->user_location_information.len != decoded) {
+        if (decoded == 0 || req->user_location_information.len != decoded) {
             ogs_error("Invalid User Location Information(ULI)");
             return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
         }
@@ -464,9 +466,9 @@ uint8_t smf_s5c_handle_create_session_request(
     }
 
     /* APCO */
-    if (req->additional_protocol_configuration_options.presence) {
+    if (req->additional_protocol_configuration_options_apco.presence) {
         OGS_TLV_STORE_DATA(&sess->gtp.ue_apco,
-                &req->additional_protocol_configuration_options);
+                &req->additional_protocol_configuration_options_apco);
     }
 
     /* Set User Location Information */
@@ -488,8 +490,11 @@ uint8_t smf_s5c_handle_create_session_request(
     if (req->msisdn.presence && req->msisdn.len && req->msisdn.data) {
         smf_ue->msisdn_len = ogs_min(req->msisdn.len, OGS_MAX_MSISDN_LEN);
         memcpy(smf_ue->msisdn, req->msisdn.data, smf_ue->msisdn_len);
-        ogs_buffer_to_bcd(smf_ue->msisdn,
-                smf_ue->msisdn_len, smf_ue->msisdn_bcd);
+        if (!ogs_buffer_to_bcd(smf_ue->msisdn, smf_ue->msisdn_len,
+                    smf_ue->msisdn_bcd, sizeof(smf_ue->msisdn_bcd))) {
+            ogs_error("Invalid MSISDN [len:%d]", smf_ue->msisdn_len);
+            return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+        }
     }
 
     /* Set IMEI(SV) */
@@ -497,16 +502,19 @@ uint8_t smf_s5c_handle_create_session_request(
         smf_ue->imeisv_len = ogs_min(req->me_identity.len, OGS_MAX_IMEISV_LEN);
         memcpy(smf_ue->imeisv,
             (uint8_t*)req->me_identity.data, smf_ue->imeisv_len);
-        ogs_buffer_to_bcd(
-            smf_ue->imeisv, smf_ue->imeisv_len, smf_ue->imeisv_bcd);
+        if (!ogs_buffer_to_bcd(smf_ue->imeisv, smf_ue->imeisv_len,
+                    smf_ue->imeisv_bcd, sizeof(smf_ue->imeisv_bcd))) {
+            ogs_error("Invalid IMEI(SV) [len:%d]", smf_ue->imeisv_len);
+            return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+        }
     }
 
     /* Set Node Identifier */
-    if (req->_aaa_server_identifier.presence) {
+    if (req->aaa_server_identifier.presence) {
         ogs_gtp2_node_identifier_t node_identifier;
         decoded = ogs_gtp2_parse_node_identifier(
-                &node_identifier, &req->_aaa_server_identifier);
-        if (req->_aaa_server_identifier.len == decoded) {
+                &node_identifier, &req->aaa_server_identifier);
+        if (req->aaa_server_identifier.len == decoded) {
             if (sess->aaa_server_identifier.name)
                 ogs_free(sess->aaa_server_identifier.name);
             sess->aaa_server_identifier.name = ogs_memdup(
@@ -522,10 +530,10 @@ uint8_t smf_s5c_handle_create_session_request(
             sess->aaa_server_identifier.realm[node_identifier.realm_len] = 0;
         } else {
             ogs_error("Invalid AAA Server Identifier [%d != %d]",
-                    req->_aaa_server_identifier.len, decoded);
+                    req->aaa_server_identifier.len, decoded);
             ogs_log_hexdump(OGS_LOG_ERROR,
-                    req->_aaa_server_identifier.data,
-                    req->_aaa_server_identifier.len);
+                    req->aaa_server_identifier.data,
+                    req->aaa_server_identifier.len);
         }
     }
 
@@ -722,13 +730,15 @@ void smf_s5c_handle_modify_bearer_request(
 
         /* Need to modify SGW-S5U */
         pfcp_xact = ogs_pfcp_xact_local_create(
-                        sess->pfcp_node, pfcp_sess_timeout, sess);
+                        sess->pfcp_node, pfcp_sess_timeout,
+                        OGS_UINT_TO_POINTER(sess->id));
         ogs_assert(pfcp_xact);
 
         pfcp_xact->epc = true; /* EPC PFCP transaction */
         pfcp_xact->assoc_xact_id = gtp_xact->id;
         pfcp_xact->modify_flags =
-            flags|OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_ACTIVATE;
+            flags|OGS_PFCP_MODIFY_SESSION|
+            OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_ACTIVATE;
 
         pfcp_xact->gtp_pti = OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED;
         pfcp_xact->gtp_cause = OGS_GTP2_CAUSE_UNDEFINED_VALUE;
@@ -755,18 +765,23 @@ void smf_s5c_handle_modify_bearer_request(
         }
 
         if (indication && indication->handover_indication) {
-            /* Non-3GPP -> 3GPP handover: deactivate the old access bearers.
-             * Under burst/teardown races the PFCP session or context can
-             * already be gone, making the deactivation send fail. Log and
-             * continue instead of asserting, which would crash the whole SMF
-             * (killing every other UE's session) over one stale handover. */
-            if (smf_epc_pfcp_send_deactivation(sess,
-                    OGS_GTP2_CAUSE_ACCESS_CHANGED_FROM_NON_3GPP_TO_3GPP)
-                            != OGS_OK) {
-                ogs_warn("PFCP deactivation send failed during Non-3GPP->3GPP "
-                        "handover Modify Bearer (session/PFCP context already "
-                        "gone under load); continuing without crash");
-            }
+            /*
+             * Handover from Non-3GPP to 3GPP.
+             *
+             * The Modify Bearer Response has already been sent above, so the
+             * 3GPP-side procedure has completed successfully. Deactivating the
+             * old WLAN session is a best-effort cleanup step: if no matching
+             * WLAN session exists (e.g. it was already released, or the
+             * handover indication was set without a Non-3GPP leg), there is
+             * simply nothing to deactivate. A peer must not be able to crash
+             * the SMF by triggering this path, so log and continue instead of
+             * asserting.
+             */
+            rv = smf_epc_pfcp_send_deactivation(sess,
+                    OGS_GTP2_CAUSE_ACCESS_CHANGED_FROM_NON_3GPP_TO_3GPP);
+            if (rv != OGS_OK)
+                ogs_error("smf_epc_pfcp_send_deactivation() failed "
+                        "[cause:ACCESS_CHANGED_FROM_NON_3GPP_TO_3GPP]");
         }
     }
 }
@@ -1447,11 +1462,19 @@ void smf_s5c_handle_bearer_resource_command(
                     ogs_ipfw_copy_and_swap(&tmp, &pf->ipfw_rule);
                     pf->flow_description =
                         ogs_ipfw_encode_flow_description(&tmp);
-                    ogs_assert(pf->flow_description);
                 } else {
                     pf->flow_description =
                         ogs_ipfw_encode_flow_description(&pf->ipfw_rule);
-                    ogs_assert(pf->flow_description);
+                }
+
+                if (!pf->flow_description) {
+                    ogs_error("Invalid packet filter [pf-direction=%d]",
+                            pf->direction);
+                    ogs_gtp2_send_error_message(
+                        xact, get_sender_f_teid(sess, sender_f_teid),
+                        OGS_GTP2_BEARER_RESOURCE_FAILURE_INDICATION_TYPE,
+                        OGS_GTP2_CAUSE_SEMANTIC_ERRORS_IN_PACKET_FILTER);
+                    return;
                 }
 
                 tft_update = 1;
@@ -1468,7 +1491,20 @@ void smf_s5c_handle_bearer_resource_command(
             pf = smf_pf_find_by_identifier(bearer, tft.pf[i].identifier+1);
             if (!pf)
                 pf = smf_pf_add(bearer);
-            ogs_assert(pf);
+            /*
+             * The per-bearer packet filter pool is limited to
+             * OGS_MAX_NUM_OF_FLOW_IN_BEARER. The UE can exceed it by adding
+             * packet filters that do not match an existing identifier,
+             * so this is UE input, not an internal error.
+             */
+            if (!pf) {
+                ogs_error("Overflow: PacketFilter in Bearer");
+                ogs_gtp2_send_error_message(
+                    xact, get_sender_f_teid(sess, sender_f_teid),
+                    OGS_GTP2_BEARER_RESOURCE_FAILURE_INDICATION_TYPE,
+                    OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE);
+                return;
+            }
 
             if (reconfigure_packet_filter(pf, &tft, i) < 0) {
                 ogs_gtp2_send_error_message(
@@ -1517,11 +1553,19 @@ void smf_s5c_handle_bearer_resource_command(
                 ogs_ipfw_copy_and_swap(&tmp, &pf->ipfw_rule);
                 pf->flow_description =
                     ogs_ipfw_encode_flow_description(&tmp);
-                ogs_assert(pf->flow_description);
             } else {
                 pf->flow_description =
                     ogs_ipfw_encode_flow_description(&pf->ipfw_rule);
-                ogs_assert(pf->flow_description);
+            }
+
+            if (!pf->flow_description) {
+                ogs_error("Invalid packet filter [pf-direction=%d]",
+                        pf->direction);
+                ogs_gtp2_send_error_message(
+                    xact, get_sender_f_teid(sess, sender_f_teid),
+                    OGS_GTP2_BEARER_RESOURCE_FAILURE_INDICATION_TYPE,
+                    OGS_GTP2_CAUSE_SEMANTIC_ERRORS_IN_PACKET_FILTER);
+                return;
             }
 
             tft_update = 1;

@@ -1,14 +1,14 @@
 /*
  * mdt_user_consent.h
  *
- * 
+ * Indicates the user has given his consent for MDT activation. 
  */
 
 #ifndef _OpenAPI_mdt_user_consent_H_
 #define _OpenAPI_mdt_user_consent_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

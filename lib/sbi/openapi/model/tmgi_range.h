@@ -8,23 +8,23 @@
 #define _OpenAPI_tmgi_range_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_tmgi_range_s OpenAPI_tmgi_range_t;
 #include "plmn_id.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_tmgi_range_s OpenAPI_tmgi_range_t;
-typedef struct OpenAPI_tmgi_range_s {
+struct OpenAPI_tmgi_range_s {
     char *mbs_service_id_start;
     char *mbs_service_id_end;
     struct OpenAPI_plmn_id_s *plmn_id;
     char *nid;
-} OpenAPI_tmgi_range_t;
+};
 
 OpenAPI_tmgi_range_t *OpenAPI_tmgi_range_create(
     char *mbs_service_id_start,

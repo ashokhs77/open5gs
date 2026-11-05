@@ -1,7 +1,7 @@
 /*
  * The MIT License
  *
- * Copyright (C) 2019-2023 by Sukchan Lee <acetcom@gmail.com>
+ * Copyright (C) 2019-2026 by Sukchan Lee <acetcom@gmail.com>
  *
  * This file is part of Open5GS.
  *
@@ -28,8 +28,8 @@
 /*******************************************************************************
  * This file had been created by nas-message.py script v0.1.0
  * Please do not modify this file but regenerate it via script.
- * Created on: 2024-01-21 18:50:03.417367 by acetcom
- * from 24301-h90.docx
+ * Created on: 2026-10-31 12:25:30.908362 by acetcom
+ * from r19.6.0/24301-j60-ch8-ch9.docx
  ******************************************************************************/
 
 #include "ogs-nas-eps.h"
@@ -60,8 +60,8 @@ int ogs_nas_eps_decode_emm_information(ogs_nas_eps_message_t *message, ogs_pkbuf
 int ogs_nas_eps_decode_downlink_nas_transport(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf);
 int ogs_nas_eps_decode_uplink_nas_transport(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf);
 int ogs_nas_eps_decode_cs_service_notification(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf);
-int ogs_nas_eps_decode_uplink_generic_nas_transport(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf);
 int ogs_nas_eps_decode_downlink_generic_nas_transport(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf);
+int ogs_nas_eps_decode_uplink_generic_nas_transport(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf);
 int ogs_nas_eps_decode_activate_default_eps_bearer_context_request(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf);
 int ogs_nas_eps_decode_activate_default_eps_bearer_context_accept(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf);
 int ogs_nas_eps_decode_activate_default_eps_bearer_context_reject(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf);
@@ -415,8 +415,26 @@ int ogs_nas_eps_decode_attach_request(ogs_nas_eps_message_t *message, ogs_pkbuf_
             attach_request->presencemask |= OGS_NAS_EPS_ATTACH_REQUEST_REQUESTED_IMSI_OFFSET_PRESENT;
             decoded += size;
             break;
+        case OGS_NAS_EPS_ATTACH_REQUEST_UE_DETERMINED_PLMN_WITH_DISASTER_CONDITION_TYPE:
+            size = ogs_nas_eps_decode_plmn_identity(&attach_request->ue_determined_plmn_with_disaster_condition, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_plmn_identity() failed");
+               return size;
+            }
+
+            attach_request->presencemask |= OGS_NAS_EPS_ATTACH_REQUEST_UE_DETERMINED_PLMN_WITH_DISASTER_CONDITION_PRESENT;
+            decoded += size;
+            break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -633,9 +651,9 @@ int ogs_nas_eps_decode_attach_accept(ogs_nas_eps_message_t *message, ogs_pkbuf_t
         case OGS_NAS_EPS_ATTACH_ACCEPT_NON__NW_PROVIDED_POLICIES_TYPE:
             decoded--;
             ogs_assert(ogs_pkbuf_push(pkbuf, 1));
-            size = ogs_nas_eps_decode_non__nw_provided_policies(&attach_accept->non__nw_provided_policies, pkbuf);
+            size = ogs_nas_eps_decode_non_nw_provided_policies(&attach_accept->non_nw_provided_policies, pkbuf);
             if (size < 0) {
-               ogs_error("ogs_nas_eps_decode_non__nw_provided_policies() failed");
+               ogs_error("ogs_nas_eps_decode_non_nw_provided_policies() failed");
                return size;
             }
 
@@ -766,8 +784,76 @@ int ogs_nas_eps_decode_attach_accept(ogs_nas_eps_message_t *message, ogs_pkbuf_t
             attach_accept->presencemask |= OGS_NAS_EPS_ATTACH_ACCEPT_FORBIDDEN_TAI_FOR_THE_LIST_OF_FORBIDDEN_TRACKING_AREAS_FORREGIONAL_PROVISION_OF_SERVICE_PRESENT;
             decoded += size;
             break;
+        case OGS_NAS_EPS_ATTACH_ACCEPT_UNAVAILABILITY_CONFIGURATION_TYPE:
+            size = ogs_nas_eps_decode_unavailability_configuration(&attach_accept->unavailability_configuration, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_unavailability_configuration() failed");
+               return size;
+            }
+
+            attach_accept->presencemask |= OGS_NAS_EPS_ATTACH_ACCEPT_UNAVAILABILITY_CONFIGURATION_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_ATTACH_ACCEPT_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_TYPE:
+            size = ogs_nas_eps_decode_access_technology_utilization_control(&attach_accept->access_technology_utilization_control, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_access_technology_utilization_control() failed");
+               return size;
+            }
+
+            attach_accept->presencemask |= OGS_NAS_EPS_ATTACH_ACCEPT_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_ATTACH_ACCEPT_S_F_SATELLITE_OPERATION_PARAMETERS_TYPE:
+            size = ogs_nas_eps_decode_s_f_satellite_operation_parameters(&attach_accept->s_f_satellite_operation_parameters, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_s_f_satellite_operation_parameters() failed");
+               return size;
+            }
+
+            attach_accept->presencemask |= OGS_NAS_EPS_ATTACH_ACCEPT_S_F_SATELLITE_OPERATION_PARAMETERS_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_ATTACH_ACCEPT_DISASTER_ROAMING_WAIT_RANGE_TYPE:
+            size = ogs_nas_eps_decode_registration_wait_range(&attach_accept->disaster_roaming_wait_range, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_registration_wait_range() failed");
+               return size;
+            }
+
+            attach_accept->presencemask |= OGS_NAS_EPS_ATTACH_ACCEPT_DISASTER_ROAMING_WAIT_RANGE_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_ATTACH_ACCEPT_DISASTER_RETURN_WAIT_RANGE_TYPE:
+            size = ogs_nas_eps_decode_registration_wait_range(&attach_accept->disaster_return_wait_range, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_registration_wait_range() failed");
+               return size;
+            }
+
+            attach_accept->presencemask |= OGS_NAS_EPS_ATTACH_ACCEPT_DISASTER_RETURN_WAIT_RANGE_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_ATTACH_ACCEPT_LIST_OF_PLMNS_TO_BE_USED_IN_DISASTER_CONDITION_TYPE:
+            size = ogs_nas_eps_decode_list_of_plmns_to_be_used_in_disaster_condition(&attach_accept->list_of_plmns_to_be_used_in_disaster_condition, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_list_of_plmns_to_be_used_in_disaster_condition() failed");
+               return size;
+            }
+
+            attach_accept->presencemask |= OGS_NAS_EPS_ATTACH_ACCEPT_LIST_OF_PLMNS_TO_BE_USED_IN_DISASTER_CONDITION_PRESENT;
+            decoded += size;
+            break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -894,8 +980,36 @@ int ogs_nas_eps_decode_attach_reject(ogs_nas_eps_message_t *message, ogs_pkbuf_t
             attach_reject->presencemask |= OGS_NAS_EPS_ATTACH_REJECT_FORBIDDEN_TAI_FOR_THE_LIST_OF_FORBIDDEN_TRACKING_AREAS_FORREGIONAL_PROVISION_OF_SERVICE_PRESENT;
             decoded += size;
             break;
+        case OGS_NAS_EPS_ATTACH_REJECT_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_TYPE:
+            size = ogs_nas_eps_decode_access_technology_utilization_control(&attach_reject->access_technology_utilization_control, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_access_technology_utilization_control() failed");
+               return size;
+            }
+
+            attach_reject->presencemask |= OGS_NAS_EPS_ATTACH_REJECT_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_ATTACH_REJECT_S_F_SATELLITE_OPERATION_PARAMETERS_TYPE:
+            size = ogs_nas_eps_decode_s_f_satellite_operation_parameters(&attach_reject->s_f_satellite_operation_parameters, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_s_f_satellite_operation_parameters() failed");
+               return size;
+            }
+
+            attach_reject->presencemask |= OGS_NAS_EPS_ATTACH_REJECT_S_F_SATELLITE_OPERATION_PARAMETERS_PRESENT;
+            decoded += size;
+            break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -998,8 +1112,46 @@ int ogs_nas_eps_decode_detach_request_to_ue(ogs_nas_eps_message_t *message, ogs_
             detach_request_to_ue->presencemask |= OGS_NAS_EPS_DETACH_REQUEST_FORBIDDEN_TAI_FOR_THE_LIST_OF_FORBIDDEN_TRACKING_AREAS_FORREGIONAL_PROVISION_OF_SERVICE_PRESENT;
             decoded += size;
             break;
+        case OGS_NAS_EPS_DETACH_REQUEST_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_TYPE:
+            size = ogs_nas_eps_decode_access_technology_utilization_control(&detach_request_to_ue->access_technology_utilization_control, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_access_technology_utilization_control() failed");
+               return size;
+            }
+
+            detach_request_to_ue->presencemask |= OGS_NAS_EPS_DETACH_REQUEST_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_DETACH_REQUEST_S_F_SATELLITE_OPERATION_PARAMETERS_TYPE:
+            size = ogs_nas_eps_decode_s_f_satellite_operation_parameters(&detach_request_to_ue->s_f_satellite_operation_parameters, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_s_f_satellite_operation_parameters() failed");
+               return size;
+            }
+
+            detach_request_to_ue->presencemask |= OGS_NAS_EPS_DETACH_REQUEST_S_F_SATELLITE_OPERATION_PARAMETERS_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_DETACH_REQUEST_DISASTER_RETURN_WAIT_RANGE_TYPE:
+            size = ogs_nas_eps_decode_registration_wait_range(&detach_request_to_ue->disaster_return_wait_range, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_registration_wait_range() failed");
+               return size;
+            }
+
+            detach_request_to_ue->presencemask |= OGS_NAS_EPS_DETACH_REQUEST_DISASTER_RETURN_WAIT_RANGE_PRESENT;
+            decoded += size;
+            break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -1409,8 +1561,36 @@ int ogs_nas_eps_decode_tracking_area_update_request(ogs_nas_eps_message_t *messa
             tracking_area_update_request->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_PAGING_RESTRICTION_PRESENT;
             decoded += size;
             break;
+        case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_UNAVAILABILITY_INFORMATION_TYPE:
+            size = ogs_nas_eps_decode_unavailability_information(&tracking_area_update_request->unavailability_information, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_unavailability_information() failed");
+               return size;
+            }
+
+            tracking_area_update_request->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_UNAVAILABILITY_INFORMATION_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_UE_DETERMINED_PLMN_WITH_DISASTER_CONDITION_TYPE:
+            size = ogs_nas_eps_decode_plmn_identity(&tracking_area_update_request->ue_determined_plmn_with_disaster_condition, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_plmn_identity() failed");
+               return size;
+            }
+
+            tracking_area_update_request->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_UE_DETERMINED_PLMN_WITH_DISASTER_CONDITION_PRESENT;
+            decoded += size;
+            break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -1643,9 +1823,9 @@ int ogs_nas_eps_decode_tracking_area_update_accept(ogs_nas_eps_message_t *messag
         case OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_NON__NW_POLICIES_TYPE:
             decoded--;
             ogs_assert(ogs_pkbuf_push(pkbuf, 1));
-            size = ogs_nas_eps_decode_non__nw_provided_policies(&tracking_area_update_accept->non__nw_policies, pkbuf);
+            size = ogs_nas_eps_decode_non_nw_provided_policies(&tracking_area_update_accept->non_nw_policies, pkbuf);
             if (size < 0) {
-               ogs_error("ogs_nas_eps_decode_non__nw_provided_policies() failed");
+               ogs_error("ogs_nas_eps_decode_non_nw_provided_policies() failed");
                return size;
             }
 
@@ -1786,8 +1966,86 @@ int ogs_nas_eps_decode_tracking_area_update_accept(ogs_nas_eps_message_t *messag
             tracking_area_update_accept->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_FORBIDDEN_TAI_FOR_THE_LIST_OF_FORBIDDEN_TRACKING_AREAS_FORREGIONAL_PROVISION_OF_SERVICE_PRESENT;
             decoded += size;
             break;
+        case OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_MAXIMUM_TIME_OFFSET_TYPE:
+            size = ogs_nas_eps_decode_gprs_timer_3(&tracking_area_update_accept->maximum_time_offset, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_gprs_timer_3() failed");
+               return size;
+            }
+
+            tracking_area_update_accept->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_MAXIMUM_TIME_OFFSET_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_UNAVAILABILITY_CONFIGURATION_TYPE:
+            size = ogs_nas_eps_decode_unavailability_configuration(&tracking_area_update_accept->unavailability_configuration, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_unavailability_configuration() failed");
+               return size;
+            }
+
+            tracking_area_update_accept->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_UNAVAILABILITY_CONFIGURATION_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_TYPE:
+            size = ogs_nas_eps_decode_access_technology_utilization_control(&tracking_area_update_accept->access_technology_utilization_control, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_access_technology_utilization_control() failed");
+               return size;
+            }
+
+            tracking_area_update_accept->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_S_F_SATELLITE_OPERATION_PARAMETERS_TYPE:
+            size = ogs_nas_eps_decode_s_f_satellite_operation_parameters(&tracking_area_update_accept->s_f_satellite_operation_parameters, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_s_f_satellite_operation_parameters() failed");
+               return size;
+            }
+
+            tracking_area_update_accept->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_S_F_SATELLITE_OPERATION_PARAMETERS_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_DISASTER_ROAMING_WAIT_RANGE_TYPE:
+            size = ogs_nas_eps_decode_registration_wait_range(&tracking_area_update_accept->disaster_roaming_wait_range, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_registration_wait_range() failed");
+               return size;
+            }
+
+            tracking_area_update_accept->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_DISASTER_ROAMING_WAIT_RANGE_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_DISASTER_RETURN_WAIT_RANGE_TYPE:
+            size = ogs_nas_eps_decode_registration_wait_range(&tracking_area_update_accept->disaster_return_wait_range, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_registration_wait_range() failed");
+               return size;
+            }
+
+            tracking_area_update_accept->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_DISASTER_RETURN_WAIT_RANGE_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_LIST_OF_PLMNS_TO_BE_USED_IN_DISASTER_CONDITION_TYPE:
+            size = ogs_nas_eps_decode_list_of_plmns_to_be_used_in_disaster_condition(&tracking_area_update_accept->list_of_plmns_to_be_used_in_disaster_condition, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_list_of_plmns_to_be_used_in_disaster_condition() failed");
+               return size;
+            }
+
+            tracking_area_update_accept->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_LIST_OF_PLMNS_TO_BE_USED_IN_DISASTER_CONDITION_PRESENT;
+            decoded += size;
+            break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -1875,8 +2133,46 @@ int ogs_nas_eps_decode_tracking_area_update_reject(ogs_nas_eps_message_t *messag
             tracking_area_update_reject->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_REJECT_FORBIDDEN_TAI_FOR_THE_LIST_OF_FORBIDDEN_TRACKING_AREAS_FORREGIONAL_PROVISION_OF_SERVICE_PRESENT;
             decoded += size;
             break;
+        case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REJECT_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_TYPE:
+            size = ogs_nas_eps_decode_access_technology_utilization_control(&tracking_area_update_reject->access_technology_utilization_control, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_access_technology_utilization_control() failed");
+               return size;
+            }
+
+            tracking_area_update_reject->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_REJECT_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REJECT_S_F_SATELLITE_OPERATION_PARAMETERS_TYPE:
+            size = ogs_nas_eps_decode_s_f_satellite_operation_parameters(&tracking_area_update_reject->s_f_satellite_operation_parameters, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_s_f_satellite_operation_parameters() failed");
+               return size;
+            }
+
+            tracking_area_update_reject->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_REJECT_S_F_SATELLITE_OPERATION_PARAMETERS_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REJECT_DISASTER_RETURN_WAIT_RANGE_TYPE:
+            size = ogs_nas_eps_decode_registration_wait_range(&tracking_area_update_reject->disaster_return_wait_range, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_registration_wait_range() failed");
+               return size;
+            }
+
+            tracking_area_update_reject->presencemask |= OGS_NAS_EPS_TRACKING_AREA_UPDATE_REJECT_DISASTER_RETURN_WAIT_RANGE_PRESENT;
+            decoded += size;
+            break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -1976,6 +2272,14 @@ int ogs_nas_eps_decode_extended_service_request(ogs_nas_eps_message_t *message, 
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -2098,8 +2402,46 @@ int ogs_nas_eps_decode_service_reject(ogs_nas_eps_message_t *message, ogs_pkbuf_
             service_reject->presencemask |= OGS_NAS_EPS_SERVICE_REJECT_FORBIDDEN_TAI_FOR_THE_LIST_OF_FORBIDDEN_TRACKING_AREAS_FORREGIONAL_PROVISION_OF_SERVICE_PRESENT;
             decoded += size;
             break;
+        case OGS_NAS_EPS_SERVICE_REJECT_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_TYPE:
+            size = ogs_nas_eps_decode_access_technology_utilization_control(&service_reject->access_technology_utilization_control, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_access_technology_utilization_control() failed");
+               return size;
+            }
+
+            service_reject->presencemask |= OGS_NAS_EPS_SERVICE_REJECT_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_SERVICE_REJECT_S_F_SATELLITE_OPERATION_PARAMETERS_TYPE:
+            size = ogs_nas_eps_decode_s_f_satellite_operation_parameters(&service_reject->s_f_satellite_operation_parameters, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_s_f_satellite_operation_parameters() failed");
+               return size;
+            }
+
+            service_reject->presencemask |= OGS_NAS_EPS_SERVICE_REJECT_S_F_SATELLITE_OPERATION_PARAMETERS_PRESENT;
+            decoded += size;
+            break;
+        case OGS_NAS_EPS_SERVICE_REJECT_DISASTER_RETURN_WAIT_RANGE_TYPE:
+            size = ogs_nas_eps_decode_registration_wait_range(&service_reject->disaster_return_wait_range, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_registration_wait_range() failed");
+               return size;
+            }
+
+            service_reject->presencemask |= OGS_NAS_EPS_SERVICE_REJECT_DISASTER_RETURN_WAIT_RANGE_PRESENT;
+            decoded += size;
+            break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -2177,8 +2519,26 @@ int ogs_nas_eps_decode_guti_reallocation_command(ogs_nas_eps_message_t *message,
             guti_reallocation_command->presencemask |= OGS_NAS_EPS_GUTI_REALLOCATION_COMMAND_UE_RADIO_CAPABILITY_ID_DELETION_INDICATION_PRESENT;
             decoded += size;
             break;
+        case OGS_NAS_EPS_GUTI_REALLOCATION_COMMAND_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_TYPE:
+            size = ogs_nas_eps_decode_access_technology_utilization_control(&guti_reallocation_command->access_technology_utilization_control, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_access_technology_utilization_control() failed");
+               return size;
+            }
+
+            guti_reallocation_command->presencemask |= OGS_NAS_EPS_GUTI_REALLOCATION_COMMAND_ACCESS_TECHNOLOGY_UTILIZATION_CONTROL_PRESENT;
+            decoded += size;
+            break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -2318,6 +2678,14 @@ int ogs_nas_eps_decode_authentication_failure(ogs_nas_eps_message_t *message, og
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -2431,8 +2799,28 @@ int ogs_nas_eps_decode_security_mode_command(ogs_nas_eps_message_t *message, ogs
             security_mode_command->presencemask |= OGS_NAS_EPS_SECURITY_MODE_COMMAND_UE_RADIO_CAPABILITY_ID_REQUEST_PRESENT;
             decoded += size;
             break;
+        case OGS_NAS_EPS_SECURITY_MODE_COMMAND_UE_COARSE_LOCATION_INFORMATION_REQUEST_TYPE:
+            decoded--;
+            ogs_assert(ogs_pkbuf_push(pkbuf, 1));
+            size = ogs_nas_eps_decode_ue_information_request(&security_mode_command->ue_coarse_location_information_request, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_ue_information_request() failed");
+               return size;
+            }
+
+            security_mode_command->presencemask |= OGS_NAS_EPS_SECURITY_MODE_COMMAND_UE_COARSE_LOCATION_INFORMATION_REQUEST_PRESENT;
+            decoded += size;
+            break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -2490,8 +2878,26 @@ int ogs_nas_eps_decode_security_mode_complete(ogs_nas_eps_message_t *message, og
             security_mode_complete->presencemask |= OGS_NAS_EPS_SECURITY_MODE_COMPLETE_UE_RADIO_CAPABILITY_ID_PRESENT;
             decoded += size;
             break;
+        case OGS_NAS_EPS_SECURITY_MODE_COMPLETE_UE_COARSE_LOCATION_INFORMATION_TYPE:
+            size = ogs_nas_eps_decode_ue_coarse_location_information(&security_mode_complete->ue_coarse_location_information, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_ue_coarse_location_information() failed");
+               return size;
+            }
+
+            security_mode_complete->presencemask |= OGS_NAS_EPS_SECURITY_MODE_COMPLETE_UE_COARSE_LOCATION_INFORMATION_PRESENT;
+            decoded += size;
+            break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -2609,6 +3015,14 @@ int ogs_nas_eps_decode_emm_information(ogs_nas_eps_message_t *message, ogs_pkbuf
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -2724,61 +3138,14 @@ int ogs_nas_eps_decode_cs_service_notification(ogs_nas_eps_message_t *message, o
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
-            break;
-        }
-    }
-
-    return decoded;
-}
-
-int ogs_nas_eps_decode_uplink_generic_nas_transport(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
-{
-    ogs_nas_eps_uplink_generic_nas_transport_t *uplink_generic_nas_transport = &message->emm.uplink_generic_nas_transport;
-    int decoded = 0;
-    int size = 0;
-
-    ogs_trace("[NAS] Decode UPLINK_GENERIC_NAS_TRANSPORT\n");
-
-    size = ogs_nas_eps_decode_generic_message_container_type(&uplink_generic_nas_transport->generic_message_container_type, pkbuf);
-    if (size < 0) {
-        ogs_error("ogs_nas_eps_decode_generic_message_container_type() failed");
-        return size;
-    }
-
-    decoded += size;
-
-    size = ogs_nas_eps_decode_generic_message_container(&uplink_generic_nas_transport->generic_message_container, pkbuf);
-    if (size < 0) {
-        ogs_error("ogs_nas_eps_decode_generic_message_container() failed");
-        return size;
-    }
-
-    decoded += size;
-
-    while (pkbuf->len > 0) {
-        uint8_t *buffer = pkbuf->data;
-        uint8_t type = (*buffer) >= 0x80 ? ((*buffer) & 0xf0) : (*buffer);
-
-        size = sizeof(uint8_t);
-        if (ogs_pkbuf_pull(pkbuf, size) == NULL) {
-           ogs_error("ogs_pkbuf_pull() failed [size:%d]", (int)size);
-           return OGS_ERROR;
-        }
-        decoded += size;
-
-        switch (type) {
-        case OGS_NAS_EPS_UPLINK_GENERIC_NAS_TRANSPORT_ADDITIONAL_INFORMATION_TYPE:
-            size = ogs_nas_eps_decode_additional_information(&uplink_generic_nas_transport->additional_information, pkbuf);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
             if (size < 0) {
-               ogs_error("ogs_nas_eps_decode_additional_information() failed");
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
                return size;
             }
 
-            uplink_generic_nas_transport->presencemask |= OGS_NAS_EPS_UPLINK_GENERIC_NAS_TRANSPORT_ADDITIONAL_INFORMATION_PRESENT;
             decoded += size;
-            break;
-        default:
-            ogs_warn("Unknown type(0x%x) or not implemented\n", type);
             break;
         }
     }
@@ -2834,6 +3201,77 @@ int ogs_nas_eps_decode_downlink_generic_nas_transport(ogs_nas_eps_message_t *mes
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
+            break;
+        }
+    }
+
+    return decoded;
+}
+
+int ogs_nas_eps_decode_uplink_generic_nas_transport(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
+{
+    ogs_nas_eps_uplink_generic_nas_transport_t *uplink_generic_nas_transport = &message->emm.uplink_generic_nas_transport;
+    int decoded = 0;
+    int size = 0;
+
+    ogs_trace("[NAS] Decode UPLINK_GENERIC_NAS_TRANSPORT\n");
+
+    size = ogs_nas_eps_decode_generic_message_container_type(&uplink_generic_nas_transport->generic_message_container_type, pkbuf);
+    if (size < 0) {
+        ogs_error("ogs_nas_eps_decode_generic_message_container_type() failed");
+        return size;
+    }
+
+    decoded += size;
+
+    size = ogs_nas_eps_decode_generic_message_container(&uplink_generic_nas_transport->generic_message_container, pkbuf);
+    if (size < 0) {
+        ogs_error("ogs_nas_eps_decode_generic_message_container() failed");
+        return size;
+    }
+
+    decoded += size;
+
+    while (pkbuf->len > 0) {
+        uint8_t *buffer = pkbuf->data;
+        uint8_t type = (*buffer) >= 0x80 ? ((*buffer) & 0xf0) : (*buffer);
+
+        size = sizeof(uint8_t);
+        if (ogs_pkbuf_pull(pkbuf, size) == NULL) {
+           ogs_error("ogs_pkbuf_pull() failed [size:%d]", (int)size);
+           return OGS_ERROR;
+        }
+        decoded += size;
+
+        switch (type) {
+        case OGS_NAS_EPS_UPLINK_GENERIC_NAS_TRANSPORT_ADDITIONAL_INFORMATION_TYPE:
+            size = ogs_nas_eps_decode_additional_information(&uplink_generic_nas_transport->additional_information, pkbuf);
+            if (size < 0) {
+               ogs_error("ogs_nas_eps_decode_additional_information() failed");
+               return size;
+            }
+
+            uplink_generic_nas_transport->presencemask |= OGS_NAS_EPS_UPLINK_GENERIC_NAS_TRANSPORT_ADDITIONAL_INFORMATION_PRESENT;
+            decoded += size;
+            break;
+        default:
+            ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -3055,6 +3493,14 @@ int ogs_nas_eps_decode_activate_default_eps_bearer_context_request(ogs_nas_eps_m
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -3104,6 +3550,14 @@ int ogs_nas_eps_decode_activate_default_eps_bearer_context_accept(ogs_nas_eps_me
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -3161,6 +3615,14 @@ int ogs_nas_eps_decode_activate_default_eps_bearer_context_reject(ogs_nas_eps_me
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -3318,6 +3780,14 @@ int ogs_nas_eps_decode_activate_dedicated_eps_bearer_context_request(ogs_nas_eps
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -3377,6 +3847,14 @@ int ogs_nas_eps_decode_activate_dedicated_eps_bearer_context_accept(ogs_nas_eps_
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -3444,6 +3922,14 @@ int ogs_nas_eps_decode_activate_dedicated_eps_bearer_context_reject(ogs_nas_eps_
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -3617,6 +4103,14 @@ int ogs_nas_eps_decode_modify_eps_bearer_context_request(ogs_nas_eps_message_t *
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -3676,6 +4170,14 @@ int ogs_nas_eps_decode_modify_eps_bearer_context_accept(ogs_nas_eps_message_t *m
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -3743,6 +4245,14 @@ int ogs_nas_eps_decode_modify_eps_bearer_context_reject(ogs_nas_eps_message_t *m
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -3832,6 +4342,14 @@ int ogs_nas_eps_decode_deactivate_eps_bearer_context_request(ogs_nas_eps_message
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -3881,6 +4399,14 @@ int ogs_nas_eps_decode_deactivate_eps_bearer_context_accept(ogs_nas_eps_message_
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -3992,6 +4518,14 @@ int ogs_nas_eps_decode_pdn_connectivity_request(ogs_nas_eps_message_t *message, 
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -4079,6 +4613,14 @@ int ogs_nas_eps_decode_pdn_connectivity_reject(ogs_nas_eps_message_t *message, o
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -4136,6 +4678,14 @@ int ogs_nas_eps_decode_pdn_disconnect_request(ogs_nas_eps_message_t *message, og
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -4193,6 +4743,14 @@ int ogs_nas_eps_decode_pdn_disconnect_reject(ogs_nas_eps_message_t *message, ogs
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -4298,6 +4856,14 @@ int ogs_nas_eps_decode_bearer_resource_allocation_request(ogs_nas_eps_message_t 
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -4385,6 +4951,14 @@ int ogs_nas_eps_decode_bearer_resource_allocation_reject(ogs_nas_eps_message_t *
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -4512,6 +5086,14 @@ int ogs_nas_eps_decode_bearer_resource_modification_request(ogs_nas_eps_message_
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -4599,6 +5181,14 @@ int ogs_nas_eps_decode_bearer_resource_modification_reject(ogs_nas_eps_message_t
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -4658,6 +5248,14 @@ int ogs_nas_eps_decode_esm_information_response(ogs_nas_eps_message_t *message, 
             break;
         default:
             ogs_warn("Unknown type(0x%x) or not implemented\n", type);
+            size = ogs_nas_skip_unknown_ie(type, pkbuf,
+                    OGS_NAS_EPS_TLV_E_IEI_MIN);
+            if (size < 0) {
+               ogs_error("ogs_nas_skip_unknown_ie() failed");
+               return size;
+            }
+
+            decoded += size;
             break;
         }
     }
@@ -4707,7 +5305,10 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
         ogs_assert(ogs_pkbuf_push(pkbuf, 1));
         decoded -= 1;
         size = ogs_nas_eps_decode_service_request(message, pkbuf);
-        ogs_assert(size >= 0);
+        if (size < 0) {
+            ogs_error("ogs_nas_eps_decode_service_request() failed");
+            return OGS_ERROR;
+        }
         decoded += size;
 
         goto out;
@@ -4717,8 +5318,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_ATTACH_REQUEST:
         size = ogs_nas_eps_decode_attach_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_attach_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_attach_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4726,8 +5327,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_ATTACH_ACCEPT:
         size = ogs_nas_eps_decode_attach_accept(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_attach_accept() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_attach_accept() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4735,8 +5336,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_ATTACH_COMPLETE:
         size = ogs_nas_eps_decode_attach_complete(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_attach_complete() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_attach_complete() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4744,8 +5345,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_ATTACH_REJECT:
         size = ogs_nas_eps_decode_attach_reject(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_attach_reject() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_attach_reject() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4753,8 +5354,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_DETACH_REQUEST:
         size = ogs_nas_eps_decode_detach_request_from_ue(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_detach_request_from_ue() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_detach_request_from_ue() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4764,8 +5365,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST:
         size = ogs_nas_eps_decode_tracking_area_update_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_tracking_area_update_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_tracking_area_update_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4773,8 +5374,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT:
         size = ogs_nas_eps_decode_tracking_area_update_accept(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_tracking_area_update_accept() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_tracking_area_update_accept() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4784,8 +5385,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REJECT:
         size = ogs_nas_eps_decode_tracking_area_update_reject(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_tracking_area_update_reject() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_tracking_area_update_reject() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4793,8 +5394,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_EXTENDED_SERVICE_REQUEST:
         size = ogs_nas_eps_decode_extended_service_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_extended_service_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_extended_service_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4802,8 +5403,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_SERVICE_REJECT:
         size = ogs_nas_eps_decode_service_reject(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_service_reject() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_service_reject() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4811,8 +5412,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_GUTI_REALLOCATION_COMMAND:
         size = ogs_nas_eps_decode_guti_reallocation_command(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_guti_reallocation_command() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_guti_reallocation_command() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4822,8 +5423,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_AUTHENTICATION_REQUEST:
         size = ogs_nas_eps_decode_authentication_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_authentication_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_authentication_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4831,8 +5432,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_AUTHENTICATION_RESPONSE:
         size = ogs_nas_eps_decode_authentication_response(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_authentication_response() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_authentication_response() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4842,8 +5443,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_IDENTITY_REQUEST:
         size = ogs_nas_eps_decode_identity_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_identity_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_identity_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4851,8 +5452,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_IDENTITY_RESPONSE:
         size = ogs_nas_eps_decode_identity_response(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_identity_response() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_identity_response() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4860,8 +5461,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_AUTHENTICATION_FAILURE:
         size = ogs_nas_eps_decode_authentication_failure(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_authentication_failure() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_authentication_failure() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4869,8 +5470,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_SECURITY_MODE_COMMAND:
         size = ogs_nas_eps_decode_security_mode_command(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_security_mode_command() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_security_mode_command() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4878,8 +5479,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_SECURITY_MODE_COMPLETE:
         size = ogs_nas_eps_decode_security_mode_complete(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_security_mode_complete() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_security_mode_complete() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4887,8 +5488,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_SECURITY_MODE_REJECT:
         size = ogs_nas_eps_decode_security_mode_reject(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_security_mode_reject() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_security_mode_reject() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4896,8 +5497,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_EMM_STATUS:
         size = ogs_nas_eps_decode_emm_status(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_emm_status() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_emm_status() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4905,8 +5506,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_EMM_INFORMATION:
         size = ogs_nas_eps_decode_emm_information(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_emm_information() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_emm_information() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4914,8 +5515,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_DOWNLINK_NAS_TRANSPORT:
         size = ogs_nas_eps_decode_downlink_nas_transport(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_downlink_nas_transport() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_downlink_nas_transport() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4923,8 +5524,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_UPLINK_NAS_TRANSPORT:
         size = ogs_nas_eps_decode_uplink_nas_transport(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_uplink_nas_transport() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_uplink_nas_transport() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4932,17 +5533,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_CS_SERVICE_NOTIFICATION:
         size = ogs_nas_eps_decode_cs_service_notification(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_cs_service_notification() failed");
-           return size;
-        }
-
-        decoded += size;
-        break;
-    case OGS_NAS_EPS_UPLINK_GENERIC_NAS_TRANSPORT:
-        size = ogs_nas_eps_decode_uplink_generic_nas_transport(message, pkbuf);
-        if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_uplink_generic_nas_transport() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_cs_service_notification() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4950,8 +5542,17 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_DOWNLINK_GENERIC_NAS_TRANSPORT:
         size = ogs_nas_eps_decode_downlink_generic_nas_transport(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_downlink_generic_nas_transport() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_downlink_generic_nas_transport() failed");
+           return OGS_ERROR;
+        }
+
+        decoded += size;
+        break;
+    case OGS_NAS_EPS_UPLINK_GENERIC_NAS_TRANSPORT:
+        size = ogs_nas_eps_decode_uplink_generic_nas_transport(message, pkbuf);
+        if (size < 0) {
+           ogs_error("ogs_nas_eps_decode_uplink_generic_nas_transport() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4989,8 +5590,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST:
         size = ogs_nas_eps_decode_activate_default_eps_bearer_context_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_activate_default_eps_bearer_context_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_activate_default_eps_bearer_context_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -4998,8 +5599,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_ACCEPT:
         size = ogs_nas_eps_decode_activate_default_eps_bearer_context_accept(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_activate_default_eps_bearer_context_accept() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_activate_default_eps_bearer_context_accept() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5007,8 +5608,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REJECT:
         size = ogs_nas_eps_decode_activate_default_eps_bearer_context_reject(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_activate_default_eps_bearer_context_reject() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_activate_default_eps_bearer_context_reject() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5016,8 +5617,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_ACTIVATE_DEDICATED_EPS_BEARER_CONTEXT_REQUEST:
         size = ogs_nas_eps_decode_activate_dedicated_eps_bearer_context_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_activate_dedicated_eps_bearer_context_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_activate_dedicated_eps_bearer_context_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5025,8 +5626,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_ACTIVATE_DEDICATED_EPS_BEARER_CONTEXT_ACCEPT:
         size = ogs_nas_eps_decode_activate_dedicated_eps_bearer_context_accept(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_activate_dedicated_eps_bearer_context_accept() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_activate_dedicated_eps_bearer_context_accept() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5034,8 +5635,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_ACTIVATE_DEDICATED_EPS_BEARER_CONTEXT_REJECT:
         size = ogs_nas_eps_decode_activate_dedicated_eps_bearer_context_reject(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_activate_dedicated_eps_bearer_context_reject() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_activate_dedicated_eps_bearer_context_reject() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5043,8 +5644,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_MODIFY_EPS_BEARER_CONTEXT_REQUEST:
         size = ogs_nas_eps_decode_modify_eps_bearer_context_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_modify_eps_bearer_context_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_modify_eps_bearer_context_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5052,8 +5653,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_MODIFY_EPS_BEARER_CONTEXT_ACCEPT:
         size = ogs_nas_eps_decode_modify_eps_bearer_context_accept(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_modify_eps_bearer_context_accept() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_modify_eps_bearer_context_accept() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5061,8 +5662,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_MODIFY_EPS_BEARER_CONTEXT_REJECT:
         size = ogs_nas_eps_decode_modify_eps_bearer_context_reject(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_modify_eps_bearer_context_reject() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_modify_eps_bearer_context_reject() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5070,8 +5671,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_DEACTIVATE_EPS_BEARER_CONTEXT_REQUEST:
         size = ogs_nas_eps_decode_deactivate_eps_bearer_context_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_deactivate_eps_bearer_context_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_deactivate_eps_bearer_context_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5079,8 +5680,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_DEACTIVATE_EPS_BEARER_CONTEXT_ACCEPT:
         size = ogs_nas_eps_decode_deactivate_eps_bearer_context_accept(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_deactivate_eps_bearer_context_accept() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_deactivate_eps_bearer_context_accept() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5088,8 +5689,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST:
         size = ogs_nas_eps_decode_pdn_connectivity_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_pdn_connectivity_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_pdn_connectivity_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5097,8 +5698,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_PDN_CONNECTIVITY_REJECT:
         size = ogs_nas_eps_decode_pdn_connectivity_reject(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_pdn_connectivity_reject() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_pdn_connectivity_reject() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5106,8 +5707,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_PDN_DISCONNECT_REQUEST:
         size = ogs_nas_eps_decode_pdn_disconnect_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_pdn_disconnect_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_pdn_disconnect_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5115,8 +5716,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_PDN_DISCONNECT_REJECT:
         size = ogs_nas_eps_decode_pdn_disconnect_reject(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_pdn_disconnect_reject() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_pdn_disconnect_reject() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5124,8 +5725,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_BEARER_RESOURCE_ALLOCATION_REQUEST:
         size = ogs_nas_eps_decode_bearer_resource_allocation_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_bearer_resource_allocation_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_bearer_resource_allocation_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5133,8 +5734,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_BEARER_RESOURCE_ALLOCATION_REJECT:
         size = ogs_nas_eps_decode_bearer_resource_allocation_reject(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_bearer_resource_allocation_reject() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_bearer_resource_allocation_reject() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5142,8 +5743,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_BEARER_RESOURCE_MODIFICATION_REQUEST:
         size = ogs_nas_eps_decode_bearer_resource_modification_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_bearer_resource_modification_request() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_bearer_resource_modification_request() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5151,8 +5752,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_BEARER_RESOURCE_MODIFICATION_REJECT:
         size = ogs_nas_eps_decode_bearer_resource_modification_reject(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_bearer_resource_modification_reject() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_bearer_resource_modification_reject() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5162,8 +5763,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_ESM_INFORMATION_RESPONSE:
         size = ogs_nas_eps_decode_esm_information_response(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_esm_information_response() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_esm_information_response() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;
@@ -5171,8 +5772,8 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_ESM_STATUS:
         size = ogs_nas_eps_decode_esm_status(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_esm_status() failed");
-           return size;
+           ogs_error("ogs_nas_eps_decode_esm_status() failed");
+           return OGS_ERROR;
         }
 
         decoded += size;

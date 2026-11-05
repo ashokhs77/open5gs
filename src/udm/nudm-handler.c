@@ -49,6 +49,13 @@ bool udm_nudm_ueau_handle_get(
                 recvmsg, "No servingNetworkName", udm_ue->suci, NULL));
         return false;
     }
+    if (!AuthenticationInfoRequest->serving_network_name[0]) {
+        ogs_error("[%s] Empty servingNetworkName", udm_ue->suci);
+        ogs_assert(true ==
+            ogs_sbi_server_send_error(stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                recvmsg, "Empty servingNetworkName", udm_ue->suci, NULL));
+        return false;
+    }
 
     if (!AuthenticationInfoRequest->ausf_instance_id) {
         ogs_error("[%s] No ausfInstanceId", udm_ue->suci);
@@ -73,7 +80,7 @@ bool udm_nudm_ueau_handle_get(
     ResynchronizationInfo = AuthenticationInfoRequest->resynchronization_info;
     if (!ResynchronizationInfo) {
 
-        r = udm_ue_sbi_discover_and_send(OGS_SBI_SERVICE_TYPE_NUDR_DR, NULL,
+        r = udm_ue_sbi_discover_and_send(OpenAPI_service_name_nudr_dr, NULL,
                 udm_nudr_dr_build_authentication_subscription,
                 udm_ue, stream, UDM_SBI_NO_STATE, NULL);
         ogs_expect(r == OGS_OK);
@@ -163,7 +170,7 @@ bool udm_nudm_ueau_handle_get(
 
         ogs_uint64_to_buffer(sqn, OGS_SQN_LEN, udm_ue->sqn);
 
-        r = udm_ue_sbi_discover_and_send(OGS_SBI_SERVICE_TYPE_NUDR_DR, NULL,
+        r = udm_ue_sbi_discover_and_send(OpenAPI_service_name_nudr_dr, NULL,
                 udm_nudr_dr_build_authentication_subscription,
                 udm_ue, stream, UDM_SBI_NO_STATE, udm_ue->sqn);
         ogs_expect(r == OGS_OK);
@@ -235,7 +242,7 @@ bool udm_nudm_ueau_handle_result_confirmation_inform(
     udm_ue->auth_event = OpenAPI_auth_event_copy(
             udm_ue->auth_event, message->AuthEvent);
 
-    r = udm_ue_sbi_discover_and_send(OGS_SBI_SERVICE_TYPE_NUDR_DR, NULL,
+    r = udm_ue_sbi_discover_and_send(OpenAPI_service_name_nudr_dr, NULL,
             udm_nudr_dr_build_update_authentication_status,
             udm_ue, stream, UDM_SBI_NO_STATE, NULL);
     ogs_expect(r == OGS_OK);
@@ -330,13 +337,19 @@ bool udm_nudm_uecm_handle_amf_registration(
         return false;
     }
 
+    if (!ogs_sbi_parse_guami(&udm_ue->guami, Guami)) {
+        ogs_error("[%s] Invalid GUAMI", udm_ue->supi);
+        ogs_assert(true ==
+            ogs_sbi_server_send_error(stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                message, "Invalid GUAMI", udm_ue->supi, NULL));
+        return false;
+    }
+
     if (udm_ue->dereg_callback_uri)
         ogs_free(udm_ue->dereg_callback_uri);
     udm_ue->dereg_callback_uri = ogs_strdup(
             Amf3GppAccessRegistration->dereg_callback_uri);
     ogs_assert(udm_ue->dereg_callback_uri);
-
-    ogs_sbi_parse_guami(&udm_ue->guami, Guami);
 
     udm_ue->rat_type = Amf3GppAccessRegistration->rat_type;
 
@@ -345,7 +358,7 @@ bool udm_nudm_uecm_handle_amf_registration(
             udm_ue->amf_3gpp_access_registration,
                 message->Amf3GppAccessRegistration);
 
-    r = udm_ue_sbi_discover_and_send(OGS_SBI_SERVICE_TYPE_NUDR_DR, NULL,
+    r = udm_ue_sbi_discover_and_send(OpenAPI_service_name_nudr_dr, NULL,
             udm_nudr_dr_build_update_amf_context, udm_ue, stream,
             UDM_SBI_NO_STATE, NULL);
     ogs_expect(r == OGS_OK);
@@ -420,12 +433,27 @@ bool udm_nudm_uecm_handle_amf_registration_update(
         return false;
     }
 
+    if (!udm_ue->amf_3gpp_access_registration) {
+        ogs_error("[%s] No AMF 3GPP access registration", udm_ue->supi);
+        ogs_assert(true ==
+            ogs_sbi_server_send_error(stream,
+                OGS_SBI_HTTP_STATUS_NOT_FOUND, message,
+                "No AMF 3GPP access registration", udm_ue->supi, NULL));
+        return false;
+    }
+
     /* TS 29.503: 5.3.2.4.2 AMF deregistration for 3GPP access
      * 2a. The UDM shall check whether the received GUAMI matches the stored
      * GUAMI. If so, the UDM shall set the PurgeFlag. The UDM responds with
      * "204 No Content".
      * 2b. Otherwise the UDM responds with "403 Forbidden". */
-    ogs_sbi_parse_guami(&recv_guami, Guami);
+    if (!ogs_sbi_parse_guami(&recv_guami, Guami)) {
+        ogs_error("[%s] Invalid GUAMI", udm_ue->supi);
+        ogs_assert(true ==
+            ogs_sbi_server_send_error(stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                message, "Invalid GUAMI", udm_ue->supi, NULL));
+        return false;
+    }
     if (memcmp(&recv_guami, &udm_ue->guami, sizeof(recv_guami)) != 0) {
         ogs_error("[%s] Guami mismatch", udm_ue->supi);
         /*
@@ -451,7 +479,6 @@ bool udm_nudm_uecm_handle_amf_registration_update(
     }
 
     if (Amf3GppAccessRegistrationModification->is_purge_flag) {
-        ogs_assert(udm_ue->amf_3gpp_access_registration);
         udm_ue->amf_3gpp_access_registration->is_purge_flag =
                 Amf3GppAccessRegistrationModification->is_purge_flag;
         udm_ue->amf_3gpp_access_registration->purge_flag =
@@ -472,7 +499,7 @@ bool udm_nudm_uecm_handle_amf_registration_update(
         OpenAPI_list_add(PatchItemList, &item);
     }
 
-    r = udm_ue_sbi_discover_and_send(OGS_SBI_SERVICE_TYPE_NUDR_DR, NULL,
+    r = udm_ue_sbi_discover_and_send(OpenAPI_service_name_nudr_dr, NULL,
             udm_nudr_dr_build_patch_amf_context,
             udm_ue, stream, UDM_SBI_NO_STATE, PatchItemList);
     ogs_expect(r == OGS_OK);
@@ -551,11 +578,12 @@ bool udm_nudm_uecm_handle_smf_registration(
         return false;
     }
 
-    if (!SmfRegistration->pdu_session_id) {
-        ogs_error("[%s:%d] No pduSessionId", udm_ue->supi, sess->psi);
+    if (SmfRegistration->pdu_session_id != sess->psi) {
+        ogs_error("[%s:%d] pduSessionId mismatch [%d]",
+                udm_ue->supi, sess->psi, SmfRegistration->pdu_session_id);
         ogs_assert(true ==
             ogs_sbi_server_send_error(stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
-                message, "No pduSessionId", udm_ue->supi, NULL));
+                message, "pduSessionId mismatch", udm_ue->supi, NULL));
         return false;
     }
 
@@ -587,7 +615,7 @@ bool udm_nudm_uecm_handle_smf_registration(
     sess->smf_registration =
         OpenAPI_smf_registration_copy(sess->smf_registration, SmfRegistration);
 
-    r = udm_sess_sbi_discover_and_send(OGS_SBI_SERVICE_TYPE_NUDR_DR, NULL,
+    r = udm_sess_sbi_discover_and_send(OpenAPI_service_name_nudr_dr, NULL,
             udm_nudr_dr_build_update_smf_context, sess, stream,
             UDM_SBI_NO_STATE, NULL);
     ogs_expect(r == OGS_OK);
@@ -609,7 +637,7 @@ bool udm_nudm_uecm_handle_smf_deregistration(
     udm_ue = udm_ue_find_by_id(sess->udm_ue_id);
     ogs_assert(udm_ue);
 
-    r = udm_sess_sbi_discover_and_send(OGS_SBI_SERVICE_TYPE_NUDR_DR, NULL,
+    r = udm_sess_sbi_discover_and_send(OpenAPI_service_name_nudr_dr, NULL,
             udm_nudr_dr_build_delete_smf_context, sess, stream,
             UDM_SBI_NO_STATE, NULL);
     ogs_expect(r == OGS_OK);
@@ -720,7 +748,8 @@ bool udm_nudm_sdm_handle_subscription_create(
     ogs_assert(server);
 
     memset(&header, 0, sizeof(header));
-    header.service.name = (char *)OGS_SBI_SERVICE_NAME_NUDM_SDM;
+    header.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nudm_sdm);
     header.api.version = (char *)OGS_SBI_API_V2;
     header.resource.component[0] = udm_ue->supi;
     header.resource.component[1] =

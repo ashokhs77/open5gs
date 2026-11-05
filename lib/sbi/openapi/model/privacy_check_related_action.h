@@ -1,14 +1,14 @@
 /*
  * privacy_check_related_action.h
  *
- * 
+ * Indicates actions related to privacy check.
  */
 
 #ifndef _OpenAPI_privacy_check_related_action_H_
 #define _OpenAPI_privacy_check_related_action_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

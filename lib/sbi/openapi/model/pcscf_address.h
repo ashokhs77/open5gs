@@ -8,21 +8,21 @@
 #define _OpenAPI_pcscf_address_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_pcscf_address_s OpenAPI_pcscf_address_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_pcscf_address_s OpenAPI_pcscf_address_t;
-typedef struct OpenAPI_pcscf_address_s {
+struct OpenAPI_pcscf_address_s {
     OpenAPI_list_t *ipv4_addrs;
     OpenAPI_list_t *ipv6_addrs;
     char *fqdn;
-} OpenAPI_pcscf_address_t;
+};
 
 OpenAPI_pcscf_address_t *OpenAPI_pcscf_address_create(
     OpenAPI_list_t *ipv4_addrs,

@@ -8,19 +8,19 @@
 #define _OpenAPI_link_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_link_s OpenAPI_link_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_link_s OpenAPI_link_t;
-typedef struct OpenAPI_link_s {
+struct OpenAPI_link_s {
     char *href;
-} OpenAPI_link_t;
+};
 
 OpenAPI_link_t *OpenAPI_link_create(
     char *href

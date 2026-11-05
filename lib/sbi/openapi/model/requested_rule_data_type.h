@@ -8,7 +8,7 @@
 #define _OpenAPI_requested_rule_data_type_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-typedef enum { OpenAPI_requested_rule_data_type_NULL = 0, OpenAPI_requested_rule_data_type_CH_ID, OpenAPI_requested_rule_data_type_MS_TIME_ZONE, OpenAPI_requested_rule_data_type_USER_LOC_INFO, OpenAPI_requested_rule_data_type_RES_RELEASE, OpenAPI_requested_rule_data_type_SUCC_RES_ALLO, OpenAPI_requested_rule_data_type_EPS_FALLBACK } OpenAPI_requested_rule_data_type_e;
+typedef enum { OpenAPI_requested_rule_data_type_NULL = 0, OpenAPI_requested_rule_data_type_CH_ID, OpenAPI_requested_rule_data_type_MS_TIME_ZONE, OpenAPI_requested_rule_data_type_USER_LOC_INFO, OpenAPI_requested_rule_data_type_RES_RELEASE, OpenAPI_requested_rule_data_type_SUCC_RES_ALLO, OpenAPI_requested_rule_data_type_EPS_FALLBACK, OpenAPI_requested_rule_data_type_UE_SAT_INFO } OpenAPI_requested_rule_data_type_e;
 
 char* OpenAPI_requested_rule_data_type_ToString(OpenAPI_requested_rule_data_type_e requested_rule_data_type);
 

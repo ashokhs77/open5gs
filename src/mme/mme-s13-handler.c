@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 by Ryan Dimsey <ryan@omnitouch.com.au>
+ * Copyright (C) 2026 by LetMeConnect
  *
  * This file is part of Open5GS.
  *
@@ -17,112 +17,226 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "nas-path.h"
-#include "s1ap-path.h"
-#include "sgsap-path.h"
-#include "mme-path.h"
-
 #include "mme-sm.h"
 #include "mme-s13-handler.h"
+#include "mme-fd-path.h"
+#include "mme-path.h"
+#include "nas-path.h"
+#include "s1ap-path.h"
 
-/* Unfortunately fd doesn't distinguish
- * between result-code and experimental-result-code.
- *
- * However, e.g. 5004 has different meaning
- * if used in result-code than in experimental-result-code */
-static uint8_t emm_cause_from_diameter(
-                const uint32_t *dia_err, const uint32_t *dia_exp_err);
-static bool is_valid_equipment(uint32_t equipment_status_code, ogs_nas_eir_t eir_config);
+bool mme_s13_check_wanted(const mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
 
-uint8_t validate_s13_message(ogs_diam_s13_message_t *s13_message) {
-    ogs_assert(s13_message);
-
-    if (s13_message->result_code != ER_DIAMETER_SUCCESS) {
-        ogs_warn("ME-Identity-Check failed [%d]",
-                    s13_message->result_code);
-        return emm_cause_from_diameter(s13_message->err, s13_message->exp_err);
-    }
-
-    return OGS_OK;
+    /*
+     * Attach only (v1). Never for an emergency attach: TS 23.401 5.3.2.1
+     * lets the MME skip the check there and forbids rejecting on it.
+     */
+    return mme_self()->eir.enabled &&
+        mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST &&
+        mme_ue->nas_eps.attach.value !=
+            OGS_NAS_ATTACH_TYPE_EPS_EMERGENCY_ATTACH;
 }
 
-uint8_t validate_eca(ogs_diam_s13_eca_message_t eca_message, ogs_nas_eir_t eir_config,  mme_ue_t *mme_ue) { 
-    if (is_valid_equipment(eca_message.equipment_status_code, eir_config)) {
-        ogs_info(" IMSI [%s], ME-Identity-Check accepted for equiptment status code '%d'", mme_ue->imsi_bcd, eca_message.equipment_status_code); 
+bool mme_s13_imeisv_is_usable(const char *imeisv_bcd)
+{
+    /*
+     * Terminal-Information needs the full 16 digits: IMEI (14, no check
+     * digit) + SVN (2), TS 23.003 6.2.2. Anything else cannot be split.
+     */
+    return imeisv_bcd &&
+        ogs_bcd_string_is_valid_n(imeisv_bcd, strlen(imeisv_bcd),
+                OGS_MAX_IMEISV_BCD_LEN, OGS_MAX_IMEISV_BCD_LEN);
+}
+
+void mme_s13_start_check(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+    ogs_assert(enb_ue);
+
+    if (!mme_s13_imeisv_is_usable(mme_ue->imeisv_bcd)) {
+        mme_s13_complete_check(enb_ue, mme_ue,
+                mme_s13_missing_pei_cause(&mme_self()->eir));
+        return;
+    }
+
+    mme_s13_send_ecr(enb_ue, mme_ue);
+}
+
+bool mme_s13_eca_is_current(const mme_ue_t *mme_ue,
+        const enb_ue_t *enb_ue, uint32_t eir_check_id)
+{
+    ogs_assert(mme_ue);
+
+    /*
+     * The ECR is sent on Security Mode Complete, after which the attach
+     * waits in emm_state_initial_context_setup. Leaving that state, a new
+     * Attach Request or a new S1 connection ends the procedure the ECR
+     * was sent for, and a later ECR carries a new id.
+     */
+    if (!mme_ue->eir_check_pending) {
+        ogs_error("[%s] Ignore unexpected ME-Identity-Check-Answer",
+                mme_ue->imsi_bcd);
+        return false;
+    }
+    if (mme_ue->eir_check_id != eir_check_id) {
+        ogs_error("[%s] Ignore stale ME-Identity-Check-Answer [%u:%u]",
+                mme_ue->imsi_bcd, eir_check_id, mme_ue->eir_check_id);
+        return false;
+    }
+    if (mme_ue->nas_eps.type != MME_EPS_TYPE_ATTACH_REQUEST) {
+        ogs_error("[%s] Ignore ME-Identity-Check-Answer "
+                "after attach cancellation",
+                mme_ue->imsi_bcd);
+        return false;
+    }
+    if (!enb_ue || !ENB_UE_IS_SERVING(mme_ue, enb_ue) ||
+            enb_ue->mme_ue_id != mme_ue->id) {
+        ogs_error("[%s] Ignore ME-Identity-Check-Answer of a released "
+                "S1 context [%d:%d]",
+                mme_ue->imsi_bcd,
+                enb_ue ? enb_ue->id : OGS_INVALID_POOL_ID,
+                mme_ue->enb_ue_id);
+        return false;
+    }
+    if (!OGS_FSM_CHECK(&mme_ue->sm, emm_state_initial_context_setup)) {
+        ogs_error("[%s] Ignore ME-Identity-Check-Answer outside the attach",
+                mme_ue->imsi_bcd);
+        return false;
+    }
+
+    return true;
+}
+
+ogs_nas_emm_cause_t mme_s13_failure_cause(const mme_eir_t *eir_config)
+{
+    ogs_assert(eir_config);
+
+    ogs_warn("Applying EIR failure_action[%s]",
+            eir_config->failure_action == OGS_EIR_ACTION_REJECT ?
+                "reject" : "allow");
+    return eir_config->failure_action == OGS_EIR_ACTION_REJECT ?
+        OGS_NAS_EMM_CAUSE_NETWORK_FAILURE :
+        OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
+}
+
+ogs_nas_emm_cause_t mme_s13_missing_pei_cause(const mme_eir_t *eir_config)
+{
+    ogs_assert(eir_config);
+
+    ogs_error("No usable IMEISV for the EIR [missing_pei_action:%s]",
+            eir_config->missing_pei_action == OGS_EIR_ACTION_REJECT ?
+                "reject" : "allow");
+    return eir_config->missing_pei_action == OGS_EIR_ACTION_REJECT ?
+        OGS_NAS_EMM_CAUSE_EPS_SERVICES_NOT_ALLOWED :
+        OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
+}
+
+ogs_nas_emm_cause_t mme_s13_equipment_status_cause(
+        uint32_t equipment_status_code, const mme_eir_t *eir_config)
+{
+    if (eir_config->allowed_states_present) {
+        bool allowed =
+            (equipment_status_code == OGS_DIAM_S13_EQUIPMENT_WHITELIST && eir_config->allow_whitelist) ||
+            (equipment_status_code == OGS_DIAM_S13_EQUIPMENT_GREYLIST && eir_config->allow_greylist) ||
+            (equipment_status_code == OGS_DIAM_S13_EQUIPMENT_BLACKLIST && eir_config->allow_blacklist);
+        if (equipment_status_code == OGS_DIAM_S13_EQUIPMENT_WHITELIST ||
+            equipment_status_code == OGS_DIAM_S13_EQUIPMENT_GREYLIST ||
+            equipment_status_code == OGS_DIAM_S13_EQUIPMENT_BLACKLIST)
+            return allowed ? OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED : OGS_NAS_EMM_CAUSE_ILLEGAL_ME;
+    }
+    switch (equipment_status_code) {
+    case OGS_DIAM_S13_EQUIPMENT_WHITELIST:
+        ogs_info("Whitelisted equipment");
         return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
-    }
-    else {
-        ogs_info("IMSI[%s], ME-Identity-Check rejected for equiptment status code '%d'", mme_ue->imsi_bcd, eca_message.equipment_status_code);
+    case OGS_DIAM_S13_EQUIPMENT_GREYLIST:
+        ogs_warn("Greylisted equipment");
+        return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
+    case OGS_DIAM_S13_EQUIPMENT_BLACKLIST:
+        ogs_warn("Blacklisted equipment");
         return OGS_NAS_EMM_CAUSE_ILLEGAL_ME;
+    default:
+        /* Not a verdict: handled like a malformed answer, as the AMF does */
+        ogs_error("Unknown Equipment-Status [%u]", equipment_status_code);
+        return mme_s13_failure_cause(eir_config);
     }
 }
 
-uint8_t mme_s13_handle_eca(
+ogs_nas_emm_cause_t mme_s13_message_cause(
+        const ogs_diam_s13_message_t *s13_message, const mme_eir_t *eir_config)
+{
+    ogs_assert(s13_message);
+    ogs_assert(eir_config);
+
+    /*
+     * 3GPP TS 29.272 clause 7.4: DIAMETER_ERROR_EQUIPMENT_UNKNOWN is the
+     * only application error the EIR can return over S13. It is a verdict
+     * ("not in my lists"), so unknown_action applies, not failure_action.
+     */
+    if (s13_message->exp_err &&
+        *s13_message->exp_err == OGS_DIAM_S13_ERROR_EQUIPMENT_UNKNOWN) {
+        ogs_info("Unknown equipment [unknown_action:%s]",
+                eir_config->unknown_action == OGS_EIR_ACTION_REJECT ?
+                    "reject" : "allow");
+        return eir_config->unknown_action == OGS_EIR_ACTION_REJECT ?
+            OGS_NAS_EMM_CAUSE_EPS_SERVICES_NOT_ALLOWED :
+            OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
+    }
+
+    /* Every other failure means the EIR gave no verdict at all */
+    if (s13_message->result_code != ER_DIAMETER_SUCCESS) {
+        ogs_warn("ME-Identity-Check answer error "
+                "[Result-Code:%d Experimental-Result-Code:%d]",
+                s13_message->err ? (int)*s13_message->err : -1,
+                s13_message->exp_err ? (int)*s13_message->exp_err : -1);
+        return mme_s13_failure_cause(eir_config);
+    }
+
+    return mme_s13_equipment_status_cause(
+            s13_message->eca_message.equipment_status_code, eir_config);
+}
+
+ogs_nas_emm_cause_t mme_s13_handle_eca(
         mme_ue_t *mme_ue, ogs_diam_s13_message_t *s13_message)
 {
-    uint8_t s13_validation_result = validate_s13_message(s13_message);
+    ogs_assert(mme_ue);
+    ogs_assert(s13_message);
 
-    if (OGS_OK != s13_validation_result) {
-        return s13_validation_result;
-    }
-
-    return validate_eca(s13_message->eca_message, mme_self()->eir, mme_ue); //passing to the mme_ue to find out the imsi number
+    return mme_s13_message_cause(s13_message, &mme_self()->eir);
 }
 
-/* 3GPP TS 29.272 Annex A; Table A.1:
- * Mapping from S6a error codes to NAS Cause Codes */
-static uint8_t emm_cause_from_diameter(
-                const uint32_t *dia_err, const uint32_t *dia_exp_err)
+void mme_s13_complete_check(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        ogs_nas_emm_cause_t emm_cause)
 {
-    if (dia_exp_err) {
-        switch (*dia_exp_err) {
-        case OGS_DIAM_S13_ERROR_USER_UNKNOWN:                   /* 5001 */
-            return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
-        case OGS_DIAM_S13_ERROR_UNKNOWN_EPS_SUBSCRIPTION:       /* 5420 */
-            return OGS_NAS_EMM_CAUSE_NO_SUITABLE_CELLS_IN_TRACKING_AREA;
-        case OGS_DIAM_S13_ERROR_RAT_NOT_ALLOWED:                /* 5421 */
-            return OGS_NAS_EMM_CAUSE_ROAMING_NOT_ALLOWED_IN_THIS_TRACKING_AREA;
-        case OGS_DIAM_S13_ERROR_ROAMING_NOT_ALLOWED:            /* 5004 */
-            return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
-        case OGS_DIAM_S13_AUTHENTICATION_DATA_UNAVAILABLE:      /* 4181 */
-            return OGS_NAS_EMM_CAUSE_NETWORK_FAILURE;
-        }
-    }
-    if (dia_err) {
-        switch (*dia_err) {
-        case ER_DIAMETER_AUTHORIZATION_REJECTED:                /* 5003 */
-        case ER_DIAMETER_UNABLE_TO_DELIVER:                     /* 3002 */
-        case ER_DIAMETER_REALM_NOT_SERVED:                      /* 3003 */
-            return OGS_NAS_EMM_CAUSE_NO_SUITABLE_CELLS_IN_TRACKING_AREA;
-        case ER_DIAMETER_UNABLE_TO_COMPLY:                      /* 5012 */
-        case ER_DIAMETER_INVALID_AVP_VALUE:                     /* 5004 */
-        case ER_DIAMETER_AVP_UNSUPPORTED:                       /* 5001 */
-        case ER_DIAMETER_MISSING_AVP:                           /* 5005 */
-        case ER_DIAMETER_RESOURCES_EXCEEDED:                    /* 5006 */
-        case ER_DIAMETER_AVP_OCCURS_TOO_MANY_TIMES:             /* 5009 */
-            return OGS_NAS_EMM_CAUSE_NETWORK_FAILURE;
-        }
+    ogs_assert(mme_ue);
+
+    if (emm_cause == OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED) {
+        ogs_info("[%s] Continue attach after EIR check", mme_ue->imsi_bcd);
+        mme_send_delete_session_or_update_location_request(enb_ue, mme_ue);
+        return;
     }
 
-    ogs_error("Unexpected Diameter Result Code %d/%d, defaulting to severe "
-              "network failure",
-              dia_err ? *dia_err : -1, dia_exp_err ? *dia_exp_err : -1);
-    return OGS_NAS_EMM_CAUSE_SEVERE_NETWORK_FAILURE;
+    ogs_warn("[%s] Attach rejected after EIR check [cause:%d]",
+            mme_ue->imsi_bcd, emm_cause);
+    mme_s13_reject_ue(enb_ue, mme_ue, emm_cause);
 }
 
-static bool is_valid_equipment(uint32_t equipment_status_code, ogs_nas_eir_t eir_config) {
-    bool is_valid = false;
+void mme_s13_reject_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        ogs_nas_emm_cause_t emm_cause)
+{
+    int r;
 
-    if ((OGS_DIAM_S13_EQUIPMENT_WHITELIST == equipment_status_code) && 
-        (eir_config.allow_whitelist)) {
-        is_valid = true;
-    } else if ((OGS_DIAM_S13_EQUIPMENT_GREYLIST == equipment_status_code) && 
-        (eir_config.allow_greylist)) {
-        is_valid = true;
-    } else if ((OGS_DIAM_S13_EQUIPMENT_BLACKLIST == equipment_status_code) && 
-        (eir_config.allow_blacklist)) {
-        is_valid = true;
-    }
+    ogs_assert(mme_ue);
 
-    return is_valid;
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
+        ogs_info("[%s] Attach reject [OGS_NAS_EMM_CAUSE:%d]",
+                mme_ue->imsi_bcd, emm_cause);
+        r = nas_eps_send_attach_reject(enb_ue, mme_ue, emm_cause,
+                OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+    } else
+        ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
+
+    mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
 }

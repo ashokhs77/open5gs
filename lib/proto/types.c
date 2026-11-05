@@ -246,7 +246,10 @@ ogs_amf_id_t *ogs_amf_id_from_string(ogs_amf_id_t *amf_id, const char *hex)
     ogs_assert(amf_id);
     ogs_assert(hex);
 
-    ogs_hex_from_string(hex, hexbuf, sizeof(hexbuf));
+    if (ogs_hex_from_string_checked(hex, hexbuf, sizeof(hexbuf)) != OGS_OK) {
+        ogs_error("Invalid AMF ID [%s]", hex);
+        return NULL;
+    }
 
     amf_id->region = hexbuf[0];
     amf_id->set1 = hexbuf[1];
@@ -365,6 +368,213 @@ cleanup:
     return ueid;
 }
 
+bool ogs_id_get_type_value(const char *str, char **type, char **value)
+{
+    ogs_assert(str);
+    ogs_assert(type);
+    ogs_assert(value);
+
+    *type = ogs_id_get_type(str);
+    *value = ogs_id_get_value(str);
+
+    if (!*type || !*value || !strlen(*type) || !strlen(*value)) {
+        ogs_error("Identity type or value is missing");
+        goto cleanup;
+    }
+
+    /* Reject extra '-' components that ogs_id_get_value() ignores. */
+    if (strlen(str) != strlen(*type) + 1 + strlen(*value)) {
+        ogs_error("Identity contains extra components");
+        goto cleanup;
+    }
+
+    return true;
+
+cleanup:
+    if (*type) {
+        ogs_free(*type);
+        *type = NULL;
+    }
+    if (*value) {
+        ogs_free(*value);
+        *value = NULL;
+    }
+
+    return false;
+}
+
+bool ogs_bcd_string_is_valid_n(
+        const char *bcd, size_t len, int min_len, int max_len)
+{
+    size_t i;
+
+    ogs_assert(min_len > 0);
+    ogs_assert(max_len >= min_len);
+
+    if (!bcd) {
+        ogs_warn("Missing BCD string");
+        return false;
+    }
+
+    if (len < (size_t)min_len || len > (size_t)max_len) {
+        ogs_warn("Invalid BCD string length [%zu], expected [%d..%d]",
+                len, min_len, max_len);
+        return false;
+    }
+
+    for (i = 0; i < len; i++) {
+        if (bcd[i] < '0' || bcd[i] > '9') {
+            ogs_warn("Invalid BCD character [0x%02x] at offset [%zu]",
+                    (unsigned char)bcd[i], i);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool ogs_bcd_string_is_valid(const char *bcd, int max_len)
+{
+    ogs_assert(bcd);
+    ogs_assert(max_len > 0);
+
+    return ogs_bcd_string_is_valid_n(bcd, strlen(bcd), 1, max_len);
+}
+
+bool ogs_id_bcd_is_valid(
+        const char *str, const char *type, int min_len, int max_len)
+{
+    size_t type_len;
+
+    ogs_assert(type && type[0]);
+    ogs_assert(min_len > 0);
+    ogs_assert(max_len >= min_len);
+
+    if (!str) {
+        ogs_warn("Missing identity, expected type [%s]", type);
+        return false;
+    }
+
+    type_len = strlen(type);
+    if (strncmp(str, type, type_len) || str[type_len] != '-') {
+        ogs_warn("Invalid identity prefix, expected [%s-]", type);
+        return false;
+    }
+
+    str += type_len + 1;
+    return ogs_bcd_string_is_valid_n(str, strlen(str), min_len, max_len);
+}
+
+bool ogs_pei_is_valid(const char *pei)
+{
+    if (!pei) {
+        ogs_warn("Missing equipment identity");
+        return false;
+    }
+
+    if (!strncmp(pei, OGS_ID_PEI_TYPE_IMEI "-",
+                sizeof(OGS_ID_PEI_TYPE_IMEI "-") - 1))
+        return ogs_id_bcd_is_valid(pei, OGS_ID_PEI_TYPE_IMEI,
+                OGS_MAX_IMEI_BCD_LEN, OGS_MAX_IMEI_BCD_LEN);
+
+    if (!strncmp(pei, OGS_ID_SUPI_TYPE_IMEISV "-",
+                sizeof(OGS_ID_SUPI_TYPE_IMEISV "-") - 1))
+        return ogs_id_bcd_is_valid(pei, OGS_ID_SUPI_TYPE_IMEISV,
+                OGS_MAX_IMEISV_BCD_LEN, OGS_MAX_IMEISV_BCD_LEN);
+
+    ogs_warn("Unsupported PEI type; expected imei- or imeisv-");
+    return false;
+}
+
+bool ogs_pdu_session_id_is_valid(int psi)
+{
+    return psi > OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED &&
+           psi <= OGS_NAS_PDU_SESSION_IDENTITY_MAX;
+}
+
+int ogs_pdu_session_id_from_string(const char *str)
+{
+    int psi = OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED;
+
+    if (!str || !*str)
+        return OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED;
+
+    for (; *str; str++) {
+        if (*str < '0' || *str > '9')
+            return OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED;
+
+        /* Bound each step so even an arbitrarily long input cannot overflow. */
+        psi = psi * 10 + (*str - '0');
+        if (psi > OGS_NAS_PDU_SESSION_IDENTITY_MAX)
+            return OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED;
+    }
+
+    return psi;
+}
+
+/*
+ * ogs_bcd_to_buffer() only converts bytes. It does not validate that
+ * the input is a bounded decimal IMSI string, so check it first.
+ */
+bool ogs_imsi_bcd_is_valid(const char *imsi_bcd)
+{
+    return ogs_bcd_string_is_valid(imsi_bcd, OGS_MAX_IMSI_BCD_LEN);
+}
+
+bool ogs_imeisv_bcd_is_valid(const char *imeisv_bcd)
+{
+    return ogs_bcd_string_is_valid(imeisv_bcd, OGS_MAX_IMEISV_BCD_LEN);
+}
+
+/*
+ * Return the decimal IMSI string only for IMSI-type SUPI.  Other SUPI
+ * types cannot be used as EPC IMSI keys and remain SUPI-only.
+ *
+ * Return OGS_ERROR only when the SUPI claims to be IMSI-type but the
+ * IMSI payload is malformed.  That must not fall back to SUPI-only.
+ */
+int ogs_supi_to_imsi_bcd(
+        const char *supi, char *imsi_bcd, bool *imsi_supi)
+{
+    int rv = OGS_ERROR;
+    char *type = NULL;
+    char *value = NULL;
+
+    ogs_assert(supi);
+    ogs_assert(imsi_bcd);
+    ogs_assert(imsi_supi);
+
+    *imsi_supi = false;
+
+    if (ogs_id_get_type_value(supi, &type, &value) == false) {
+        ogs_error("Invalid SUPI [%s]", supi);
+        goto cleanup;
+    }
+
+    /* Non-IMSI SUPI is valid, but has no EPC IMSI alias. */
+    if (strcmp(type, OGS_ID_SUPI_TYPE_IMSI) != 0) {
+        rv = OGS_OK;
+        goto cleanup;
+    }
+
+    if (ogs_imsi_bcd_is_valid(value) == false) {
+        ogs_error("Invalid IMSI SUPI [%s]", supi);
+        goto cleanup;
+    }
+
+    ogs_cpystrn(imsi_bcd, value, OGS_MAX_IMSI_BCD_LEN+1);
+    *imsi_supi = true;
+    rv = OGS_OK;
+
+cleanup:
+    if (type)
+        ogs_free(type);
+    if (value)
+        ogs_free(value);
+
+    return rv;
+}
+
 char *ogs_s_nssai_sd_to_string(const ogs_uint24_t sd)
 {
     char *string = NULL;
@@ -387,6 +597,94 @@ ogs_uint24_t ogs_s_nssai_sd_from_string(const char *hex)
         return sd;
 
     return ogs_uint24_from_string_hexadecimal((char *)hex);
+}
+
+char *ogs_framed_route_build(const char *cidr)
+{
+    char *value = NULL;
+
+    ogs_assert(cidr);
+
+    /*
+     * RFC 2865 5.22 / RFC 3162 2.5: a gateway of 0.0.0.0 (or ::) means
+     * "use the user's own address"; Open5GS uses metric 1.
+     */
+    if (strchr(cidr, ':'))
+        value = ogs_msprintf("%s :: 1", cidr);
+    else
+        value = ogs_msprintf("%s 0.0.0.0 1", cidr);
+    ogs_assert(value);
+
+    return value;
+}
+
+char *ogs_framed_route_parse(const char *value, int length)
+{
+    const char *end = NULL;
+    char *cidr = NULL;
+
+    ogs_assert(value);
+
+    /* Prefix ends at the first space; gateway and metric are ignored. */
+    if (length > 0) {
+        end = memchr(value, ' ', length);
+        if (end)
+            length = end - value;
+    }
+
+    if (length <= 0) {
+        ogs_warn("Empty framed route prefix");
+        return NULL;
+    }
+
+    /* AVP/IE values are length-delimited, not NUL-terminated. */
+    if (memchr(value, '\0', length)) {
+        ogs_warn("NUL byte in framed route prefix");
+        return NULL;
+    }
+
+    cidr = ogs_strndup(value, length);
+    ogs_assert(cidr);
+
+    /*
+     * RFC 2865 5.22 defines classful defaults for IPv4 prefixes without
+     * a length. Validate the dotted-quad address before deriving one;
+     * there is no classful default for class D/E addresses.
+     * RFC 3162 2.5 also permits an omitted IPv6 prefix length, but does
+     * not define a default. Leave IPv6 prefixes unchanged; the caller
+     * interprets an omitted length and validates the resulting subnet.
+     */
+    if (!strchr(cidr, '/') && !strchr(cidr, ':')) {
+        ogs_sockaddr_t addr;
+        int first, bits;
+        char *classful = NULL;
+
+        if (ogs_inet_pton(AF_INET, cidr, &addr) != OGS_OK) {
+            ogs_warn("Invalid framed route IPv4 address [%s]", cidr);
+            ogs_free(cidr);
+            return NULL;
+        }
+
+        first = be32toh(addr.sin.sin_addr.s_addr) >> 24;
+        if (first < 128)
+            bits = 8;
+        else if (first < 192)
+            bits = 16;
+        else if (first < 224)
+            bits = 24;
+        else {
+            ogs_warn("No classful prefix length for IPv4 route [%s]", cidr);
+            ogs_free(cidr);
+            return NULL;
+        }
+
+        classful = ogs_msprintf("%s/%d", cidr, bits);
+        ogs_assert(classful);
+        ogs_free(cidr);
+        cidr = classful;
+    }
+
+    return cidr;
 }
 
 int ogs_fqdn_build(char *dst, const char *src, int length)
@@ -713,13 +1011,16 @@ int ogs_ipv6addr_from_string(uint8_t *addr6, const char *string)
 
 int ogs_ipv6prefix_from_string(uint8_t *addr6, uint8_t *prefixlen, const char *string)
 {
-    int rv;
+    int rv = OGS_ERROR;
     ogs_sockaddr_t tmp;
     char *v = NULL, *pv = NULL, *ipstr = NULL, *mask_or_numbits = NULL;
+    char *endptr = NULL;
+    long bits;
 
     ogs_assert(addr6);
     ogs_assert(prefixlen);
     ogs_assert(string);
+
     pv = v = ogs_strdup(string);
     if (!v) {
         ogs_error("ogs_strdup() failed");
@@ -727,26 +1028,35 @@ int ogs_ipv6prefix_from_string(uint8_t *addr6, uint8_t *prefixlen, const char *s
     }
 
     ipstr = strsep(&v, "/");
-    if (ipstr)
-        mask_or_numbits = v;
+    mask_or_numbits = v;
 
     if (!ipstr || !mask_or_numbits) {
-        ogs_error("Invalid IPv6 Prefix string = %s", v);
-        ogs_free(v);
-        return OGS_ERROR;
+        ogs_error("Invalid IPv6 Prefix string = %s", string);
+        goto cleanup;
     }
 
-    rv = ogs_inet_pton(AF_INET6, ipstr, &tmp);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_inet_pton() failed");
-        return rv;
+    if (ogs_inet_pton(AF_INET6, ipstr, &tmp) != OGS_OK) {
+        ogs_error("ogs_inet_pton() failed [%s]", string);
+        goto cleanup;
+    }
+
+    /* The prefix length is narrowed into a uint8_t, so out-of-range values
+     * from a peer would wrap (e.g. /384 -> /128) and slip past callers that
+     * gate on an exact length. Parse and range-check it like ogs_ipsubnet(). */
+    bits = strtol(mask_or_numbits, &endptr, 10);
+    if (*mask_or_numbits == '\0' || *endptr != '\0' ||
+            bits < 0 || bits > OGS_IPV6_128_PREFIX_LEN) {
+        ogs_error("Invalid IPv6 prefix length [%s]", string);
+        goto cleanup;
     }
 
     memcpy(addr6, tmp.sin6.sin6_addr.s6_addr, OGS_IPV6_LEN);
-    *prefixlen = atoi(mask_or_numbits);
+    *prefixlen = (uint8_t)bits;
+    rv = OGS_OK;
 
+cleanup:
     ogs_free(pv);
-    return OGS_OK;
+    return rv;
 }
 
 int ogs_check_br_conf(ogs_bitrate_t *br)
@@ -804,33 +1114,6 @@ int ogs_sockaddr_to_user_plane_ip_resource_info(
     if (addr6) {
         info->v6 = 1;
         memcpy(info->addr6, addr6->sin6.sin6_addr.s6_addr, OGS_IPV6_LEN);
-    }
-
-    return OGS_OK;
-}
-
-int ogs_user_plane_ip_resource_info_to_sockaddr(
-    ogs_user_plane_ip_resource_info_t *info,
-    ogs_sockaddr_t **addr, ogs_sockaddr_t **addr6)
-{
-    ogs_assert(addr && addr6);
-    ogs_assert(info);
-
-    *addr = NULL;
-    *addr6 = NULL;
-
-    if (info->v4) {
-        *addr = ogs_calloc(1, sizeof(**addr));
-        ogs_assert(*addr);
-        (*addr)->sin.sin_addr.s_addr = info->addr;
-        (*addr)->ogs_sa_family = AF_INET;
-    }
-
-    if (info->v6) {
-        *addr6 = ogs_calloc(1, sizeof(**addr6));
-        ogs_assert(*addr6);
-        memcpy((*addr6)->sin6.sin6_addr.s6_addr, info->addr6, OGS_IPV6_LEN);
-        (*addr6)->ogs_sa_family = AF_INET6;
     }
 
     return OGS_OK;
@@ -910,6 +1193,32 @@ void ogs_ims_data_free(ogs_ims_data_t *ims_data)
     }
 }
 
+/*
+ * TS29.214 4.4.5, TS29.514 4.2.6.7
+ * Subscription to Notification of Signalling Path Status
+ *
+ * Media component number 0 with a single AF signalling sub-component
+ * whose flow number is 0. The rest of the attributes shall not be used,
+ * and the PCC rules for AF signalling are expected to be provisioned
+ * already, so no PCC rule is derived from this media component.
+ */
+bool ogs_media_is_signalling_path_status(
+        ogs_media_component_t *media_component)
+{
+    ogs_media_sub_component_t *sub = NULL;
+
+    ogs_assert(media_component);
+
+    if (media_component->media_component_number != 0 ||
+        media_component->num_of_sub != 1)
+        return false;
+
+    sub = &media_component->sub[0];
+
+    return sub->flow_number == 0 &&
+        sub->flow_usage == OGS_FLOW_USAGE_AF_SIGNALLING;
+}
+
 static int flow_rx_to_gx(ogs_flow_t *rx_flow, ogs_flow_t *gx_flow)
 {
     int len;
@@ -917,6 +1226,11 @@ static int flow_rx_to_gx(ogs_flow_t *rx_flow, ogs_flow_t *gx_flow)
 
     ogs_assert(rx_flow);
     ogs_assert(gx_flow);
+
+    if (!rx_flow->description) {
+        ogs_error("No Flow Description");
+        return OGS_ERROR;
+    }
 
     if (!strncmp(rx_flow->description,
                 "permit out", strlen("permit out"))) {
@@ -934,10 +1248,35 @@ static int flow_rx_to_gx(ogs_flow_t *rx_flow, ogs_flow_t *gx_flow)
         gx_flow->description = ogs_calloc(1, len);
         ogs_assert(gx_flow->description);
         strcpy(gx_flow->description, "permit out");
-        from_str = strstr(&rx_flow->description[strlen("permit in")], "from");
-        ogs_assert(from_str);
-        to_str = strstr(&rx_flow->description[strlen("permit in")], "to");
-        ogs_assert(to_str);
+
+        /*
+         * Match "from" and "to" as space-padded tokens, and ensure
+         * "to" follows "from" before using pointer-length arithmetic.
+         */
+        from_str = strstr(&rx_flow->description[strlen("permit in")],
+                " from ");
+        if (!from_str) {
+            ogs_error("Invalid Flow Description : [%s] (missing 'from')",
+                    rx_flow->description);
+            ogs_free(gx_flow->description);
+            gx_flow->description = NULL;
+            return OGS_ERROR;
+        }
+
+        to_str = strstr(&rx_flow->description[strlen("permit in")],
+                " to ");
+        if (!to_str || to_str <= from_str) {
+            ogs_error("Invalid Flow Description : [%s] "
+                    "(missing 'to' or 'to' precedes 'from')",
+                    rx_flow->description);
+            ogs_free(gx_flow->description);
+            gx_flow->description = NULL;
+            return OGS_ERROR;
+        }
+
+        from_str++;
+        to_str++;
+
         strncat(gx_flow->description,
             &rx_flow->description[strlen("permit in")],
             strlen(rx_flow->description) -
@@ -1184,4 +1523,38 @@ int ogs_pcc_rule_update_qos_from_media(
         pcc_rule->qos.gbr.uplink = pcc_rule->qos.mbr.uplink;
 
     return OGS_OK;
+}
+
+/* Returns true if any ARP field of the PCC rule was changed */
+bool ogs_pcc_rule_update_arp_from_media(
+        ogs_pcc_rule_t *pcc_rule, ogs_media_component_t *media_component)
+{
+    bool changed = false;
+
+    ogs_assert(pcc_rule);
+    ogs_assert(media_component);
+
+    if (media_component->arp.priority_level &&
+        media_component->arp.priority_level !=
+            pcc_rule->qos.arp.priority_level) {
+        pcc_rule->qos.arp.priority_level =
+            media_component->arp.priority_level;
+        changed = true;
+    }
+    if (media_component->arp.pre_emption_capability &&
+        media_component->arp.pre_emption_capability !=
+            pcc_rule->qos.arp.pre_emption_capability) {
+        pcc_rule->qos.arp.pre_emption_capability =
+            media_component->arp.pre_emption_capability;
+        changed = true;
+    }
+    if (media_component->arp.pre_emption_vulnerability &&
+        media_component->arp.pre_emption_vulnerability !=
+            pcc_rule->qos.arp.pre_emption_vulnerability) {
+        pcc_rule->qos.arp.pre_emption_vulnerability =
+            media_component->arp.pre_emption_vulnerability;
+        changed = true;
+    }
+
+    return changed;
 }

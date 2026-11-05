@@ -1,14 +1,14 @@
 /*
  * location_privacy_ind.h
  *
- * 
+ * Indicates one of the mutually exclusive global settings (if the location is allowed or disallowed). 
  */
 
 #ifndef _OpenAPI_location_privacy_ind_H_
 #define _OpenAPI_location_privacy_ind_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

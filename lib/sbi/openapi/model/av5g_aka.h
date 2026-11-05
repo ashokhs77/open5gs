@@ -8,21 +8,21 @@
 #define _OpenAPI_av5g_aka_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_av5g_aka_s OpenAPI_av5g_aka_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_av5g_aka_s OpenAPI_av5g_aka_t;
-typedef struct OpenAPI_av5g_aka_s {
+struct OpenAPI_av5g_aka_s {
     char *rand;
     char *hxres_star;
     char *autn;
-} OpenAPI_av5g_aka_t;
+};
 
 OpenAPI_av5g_aka_t *OpenAPI_av5g_aka_create(
     char *rand,

@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2023 by Ryan Dimsey <ryan@omnitouch.com.au>
+ * Copyright (C) 2019 by Sukchan Lee <acetcom@gmail.com>
+ * Copyright (C) 2026 by LetMeConnect
  *
  * This file is part of Open5GS.
  *
@@ -17,8 +18,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef OGS_DIMAETER_S13_H
-#define OGS_DIMAETER_S13_H
+#ifndef OGS_DIAMETER_S13_H
+#define OGS_DIAMETER_S13_H
 
 #include "ogs-diameter-common.h"
 
@@ -38,4 +39,4 @@ extern "C" {
 }
 #endif
 
-#endif /* OGS_DIMAETER_S13_H */
+#endif /* OGS_DIAMETER_S13_H */

@@ -12,6 +12,12 @@ This guide is based on **Fedora 33** Distribution.
 ### Getting MongoDB
 ---
 
+**Tip:** MongoDB is used as the database for PCF/UDR and PCRF/HSS.
+{: .notice--info}
+
+**Note:** If you use an external MongoDB server, you can skip this section.
+{: .notice--warning}
+
 Install MongoDB with package manager.
 ```bash
 $ sudo dnf -y install mongodb-server
@@ -70,7 +76,7 @@ $ ip link show
 
 Install the depedencies for building the source code.
 ```bash
-$ sudo dnf install python3 ninja-build gcc gcc-c++ flex bison git cmake lksctp-tools-devel libidn-devel gnutls-devel libgcrypt-devel openssl-devel cyrus-sasl-devel libyaml-devel mongo-c-driver-devel libmicrohttpd-devel libcurl-devel libnghttp2-devel libtalloc-devel iproute
+$ sudo dnf install python3 ninja-build gcc gcc-c++ flex bison git cmake lksctp-tools-devel libidn-devel c-ares-devel gnutls-devel libgcrypt-devel openssl-devel cyrus-sasl-devel libyaml-devel mongo-c-driver-devel libmicrohttpd-devel libcurl-devel libnghttp2-devel libtalloc-devel iproute
 ```
 
 Install Meson

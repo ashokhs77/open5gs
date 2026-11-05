@@ -8,21 +8,21 @@
 #define _OpenAPI_create_ue_context_403_response_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_create_ue_context_403_response_s OpenAPI_create_ue_context_403_response_t;
 #include "ue_context_create_error.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_create_ue_context_403_response_s OpenAPI_create_ue_context_403_response_t;
-typedef struct OpenAPI_create_ue_context_403_response_s {
+struct OpenAPI_create_ue_context_403_response_s {
     struct OpenAPI_ue_context_create_error_s *json_data;
     OpenAPI_binary_t* binary_data_n2_information;
-} OpenAPI_create_ue_context_403_response_t;
+};
 
 OpenAPI_create_ue_context_403_response_t *OpenAPI_create_ue_context_403_response_create(
     OpenAPI_ue_context_create_error_t *json_data,

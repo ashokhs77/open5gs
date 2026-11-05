@@ -8,25 +8,27 @@
 #define _OpenAPI_traffic_influ_data_notif_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_traffic_influ_data_notif_s OpenAPI_traffic_influ_data_notif_t;
 #include "traffic_influ_data.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_traffic_influ_data_notif_s OpenAPI_traffic_influ_data_notif_t;
-typedef struct OpenAPI_traffic_influ_data_notif_s {
+struct OpenAPI_traffic_influ_data_notif_s {
     char *res_uri;
     struct OpenAPI_traffic_influ_data_s *traffic_influ_data;
-} OpenAPI_traffic_influ_data_notif_t;
+    char *notif_id;
+};
 
 OpenAPI_traffic_influ_data_notif_t *OpenAPI_traffic_influ_data_notif_create(
     char *res_uri,
-    OpenAPI_traffic_influ_data_t *traffic_influ_data
+    OpenAPI_traffic_influ_data_t *traffic_influ_data,
+    char *notif_id
 );
 void OpenAPI_traffic_influ_data_notif_free(OpenAPI_traffic_influ_data_notif_t *traffic_influ_data_notif);
 OpenAPI_traffic_influ_data_notif_t *OpenAPI_traffic_influ_data_notif_parseFromJSON(cJSON *traffic_influ_data_notifJSON);

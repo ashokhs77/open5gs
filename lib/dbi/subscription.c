@@ -138,10 +138,10 @@ int ogs_dbi_update_sqn(char *supi, uint64_t sqn)
 
     ogs_assert(supi);
 
-    supi_type = ogs_id_get_type(supi);
-    ogs_assert(supi_type);
-    supi_id = ogs_id_get_value(supi);
-    ogs_assert(supi_id);
+    if (ogs_id_get_type_value(supi, &supi_type, &supi_id) == false) {
+        ogs_error("Invalid supi=%s", supi);
+        return OGS_ERROR;
+    }
 
     query = BCON_NEW(supi_type, BCON_UTF8(supi_id));
     update = BCON_NEW("$set",
@@ -177,10 +177,10 @@ int ogs_dbi_update_imeisv(char *supi, char *imeisv)
 
     ogs_assert(supi);
 
-    supi_type = ogs_id_get_type(supi);
-    ogs_assert(supi_type);
-    supi_id = ogs_id_get_value(supi);
-    ogs_assert(supi_id);
+    if (ogs_id_get_type_value(supi, &supi_type, &supi_id) == false) {
+        ogs_error("Invalid supi=%s", supi);
+        return OGS_ERROR;
+    }
 
     ogs_debug("SUPI type: %s, SUPI id: %s, imeisv: %s",
             supi_type, supi_id, imeisv);
@@ -219,10 +219,10 @@ int ogs_dbi_update_mme(char *supi, char *mme_host, char *mme_realm,
 
     ogs_assert(supi);
 
-    supi_type = ogs_id_get_type(supi);
-    ogs_assert(supi_type);
-    supi_id = ogs_id_get_value(supi);
-    ogs_assert(supi_id);
+    if (ogs_id_get_type_value(supi, &supi_type, &supi_id) == false) {
+        ogs_error("Invalid supi=%s", supi);
+        return OGS_ERROR;
+    }
 
     ogs_debug("SUPI type: %s, SUPI id: %s, mme_host: %s, mme_realm: %s",
             supi_type, supi_id, mme_host, mme_realm);
@@ -264,10 +264,10 @@ int ogs_dbi_increment_sqn(char *supi)
 
     ogs_assert(supi);
 
-    supi_type = ogs_id_get_type(supi);
-    ogs_assert(supi_type);
-    supi_id = ogs_id_get_value(supi);
-    ogs_assert(supi_id);
+    if (ogs_id_get_type_value(supi, &supi_type, &supi_id) == false) {
+        ogs_error("Invalid supi=%s", supi);
+        return OGS_ERROR;
+    }
 
     query = BCON_NEW(supi_type, BCON_UTF8(supi_id));
     update = BCON_NEW("$inc",
@@ -327,10 +327,10 @@ int ogs_dbi_subscription_data(char *supi,
 
     memset(subscription_data, 0, sizeof(*subscription_data));
 
-    supi_type = ogs_id_get_type(supi);
-    ogs_assert(supi_type);
-    supi_id = ogs_id_get_value(supi);
-    ogs_assert(supi_id);
+    if (ogs_id_get_type_value(supi, &supi_type, &supi_id) == false) {
+        ogs_error("Invalid supi=%s", supi);
+        return OGS_ERROR;
+    }
 
     query = BCON_NEW(supi_type, BCON_UTF8(supi_id));
 #if MONGOC_CHECK_VERSION(1, 5, 0)
@@ -732,6 +732,18 @@ int ogs_dbi_subscription_data(char *supi,
                                     BSON_ITER_HOLDS_ARRAY(&child4_iter)) {
                                     int i;
 
+                                    /*
+                                     * Consumed by the UDR only: UDM sends
+                                     * it to the SMF in
+                                     * SessionManagementSubscriptionData
+                                     * (TS 29.503 ipv4FrameRouteList).
+                                     * The HSS ignores it - S6a cannot
+                                     * carry framed routes, so in EPC the
+                                     * PCRF delivers them over Gx instead
+                                     * (see lib/dbi/session.c and the
+                                     * comment on ogs_session_t in
+                                     * lib/proto/types.h).
+                                     */
                                     if (session->ipv4_framed_routes) {
                                         for (i = 0; i < OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI; i++) {
                                             if (!session->ipv4_framed_routes[i])

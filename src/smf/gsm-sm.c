@@ -67,26 +67,46 @@ static uint8_t gtp_cause_from_diameter(uint8_t gtp_version,
     }
 }
 
-static void send_gtp_create_err_msg(const smf_sess_t *sess,
+static void send_gtp_error_msg(const smf_sess_t *sess,
         ogs_gtp_xact_t *gtp_xact, uint8_t gtp_cause)
 {
-    if (gtp_xact->gtp_version == 1)
-        ogs_gtp1_send_error_message(gtp_xact, sess->sgw_s5c_teid,
-            OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE, gtp_cause);
-    else
-        ogs_gtp2_send_error_message(gtp_xact, sess->sgw_s5c_teid,
-            OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, gtp_cause);
-}
+    uint8_t response_type = 0;
 
-static void send_gtp_delete_err_msg(const smf_sess_t *sess,
-        ogs_gtp_xact_t *gtp_xact, uint8_t gtp_cause)
-{
-    if (gtp_xact->gtp_version == 1)
-        ogs_gtp1_send_error_message(gtp_xact, sess->sgw_s5c_teid,
-            OGS_GTP1_DELETE_PDP_CONTEXT_RESPONSE_TYPE, gtp_cause);
-    else
-        ogs_gtp2_send_error_message(gtp_xact, sess->sgw_s5c_teid,
-            OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE, gtp_cause);
+    ogs_assert(sess);
+    ogs_assert(gtp_xact);
+
+    switch (gtp_xact->gtp_version) {
+    case 1:
+        switch (gtp_xact->seq[0].type) {
+        case OGS_GTP1_CREATE_PDP_CONTEXT_REQUEST_TYPE:
+            response_type = OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE;
+            break;
+        case OGS_GTP1_DELETE_PDP_CONTEXT_REQUEST_TYPE:
+            response_type = OGS_GTP1_DELETE_PDP_CONTEXT_RESPONSE_TYPE;
+            break;
+        }
+        break;
+    case 2:
+        switch (gtp_xact->seq[0].type) {
+        case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
+            response_type = OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE;
+            break;
+        case OGS_GTP2_DELETE_SESSION_REQUEST_TYPE:
+            response_type = OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE;
+            break;
+        }
+        break;
+    }
+
+    if (!response_type) {
+        ogs_fatal("Unsupported GTP request [version:%u,type:%u]",
+                gtp_xact->gtp_version, gtp_xact->seq[0].type);
+        ogs_assert_if_reached();
+        return;
+    }
+
+    ogs_gtp_send_error_message(
+            gtp_xact, sess->sgw_s5c_teid, response_type, gtp_cause);
 }
 
 static bool send_ccr_init_req_gx_gy(smf_sess_t *sess, ogs_gtp_xact_t *gtp_xact)
@@ -95,12 +115,11 @@ static bool send_ccr_init_req_gx_gy(smf_sess_t *sess, ogs_gtp_xact_t *gtp_xact)
 
     if (use_gy == -1) {
         ogs_error("No Gy Diameter Peer");
-        /* TODO: drop Gx connection here,
-         * possibly move to another "releasing" state! */
+        /* No Gx/Gy Initial request has been sent at this point. */
         uint8_t gtp_cause = (gtp_xact->gtp_version == 1) ?
                 OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE :
                 OGS_GTP2_CAUSE_UE_NOT_AUTHORISED_BY_OCS_OR_EXTERNAL_AAA_SERVER;
-        send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
+        send_gtp_error_msg(sess, gtp_xact, gtp_cause);
         return false;
     }
 
@@ -123,6 +142,9 @@ static bool send_ccr_init_req_gx_gy(smf_sess_t *sess, ogs_gtp_xact_t *gtp_xact)
 static bool send_ccr_termination_req_gx_gy_s6b(
         smf_sess_t *sess, ogs_gtp_xact_t *gtp_xact)
 {
+    /* Keep the existing RAT/Gy policy for established sessions. The Initial
+     * failure path uses *_session_created instead because authentication
+     * may have stopped before some of these interfaces were started. */
     /* TODO: we should take into account here whether "sess" has an active Gy
        session created, not whether one was supposedly created as per policy */
     int use_gy = smf_use_gy_iface();
@@ -131,10 +153,15 @@ static bool send_ccr_termination_req_gx_gy_s6b(
         ogs_error("No Gy Diameter Peer");
         /* TODO: drop Gx connection here,
          * possibly move to another "releasing" state! */
-        uint8_t gtp_cause = (gtp_xact->gtp_version == 1) ?
+        if (gtp_xact) {
+            uint8_t gtp_cause = (gtp_xact->gtp_version == 1) ?
                 OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE :
                 OGS_GTP2_CAUSE_UE_NOT_AUTHORISED_BY_OCS_OR_EXTERNAL_AAA_SERVER;
-        send_gtp_delete_err_msg(sess, gtp_xact, gtp_cause);
+            send_gtp_error_msg(sess, gtp_xact, gtp_cause);
+        } else {
+            ogs_error("No GTP transaction : "
+                    "Cannot report 'No Gy Diameter Peer' to the peer");
+        }
         return false;
     }
 
@@ -153,11 +180,84 @@ static bool send_ccr_termination_req_gx_gy_s6b(
         /* Gy is available,
          * set up session for the bearer before accepting it towards the UE */
         sess->sm_data.gy_ccr_term_in_flight = true;
+        sess->gy.reporting_reason = OGS_DIAM_GY_REPORTING_REASON_FINAL;
         smf_gy_send_ccr(
                 sess, gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID,
                 OGS_DIAM_GY_CC_REQUEST_TYPE_TERMINATION_REQUEST);
     }
     return true;
+}
+
+static bool hsmf_update_has_up_cnx_state(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    return sess->nsmf_param.up_cnx_state != OpenAPI_up_cnx_state_NULL;
+}
+
+/*
+ * [Issue #4741]
+ *
+ * Record the user-plane state the V-SMF has delegated, as
+ * smf_nsmf_handle_update_sm_context() records it in the V-SMF.
+ *
+ * The buffering and the downlink data report happen on the home side,
+ * and smf_5gc_n4_handle_session_report_request() decides on this field
+ * whether to start a network triggered Service Request. Without it the
+ * H-SMF still believes the user plane is up and drops the report.
+ *
+ * This is called from the accepted upCnxState branches below rather
+ * than where HsmfUpdateData is parsed, so that a combination rejected
+ * as Bad Request leaves the session untouched.
+ */
+static void hsmf_update_record_up_cnx_state(smf_sess_t *sess)
+{
+    smf_ue_t *smf_ue = NULL;
+
+    ogs_assert(sess);
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    ogs_assert(smf_ue);
+
+    ogs_info("[%s:%d] upCnxState[%d->%d] recorded in the H-SMF",
+            smf_ue->supi, sess->psi,
+            sess->up_cnx_state, sess->nsmf_param.up_cnx_state);
+    sess->up_cnx_state = sess->nsmf_param.up_cnx_state;
+}
+
+static bool hsmf_update_has_qos_modification(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    return sess->nsmf_param.up_cnx_state == OpenAPI_up_cnx_state_NULL &&
+        sess->nsmf_param.pfcp_flags != 0;
+}
+
+static void hsmf_update_send_bad_request(
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *sbi_message,
+        smf_sess_t *sess, const char *reason)
+{
+    char *strerror = NULL;
+
+    ogs_assert(stream);
+    ogs_assert(sbi_message);
+    ogs_assert(sess);
+    ogs_assert(reason);
+
+    strerror = ogs_msprintf(
+            "Invalid HsmfUpdateData: %s "
+            "[requestIndication:%d][upCnxState:%d][pfcp_flags:0x%llx]",
+            reason,
+            sess->nsmf_param.request_indication,
+            sess->nsmf_param.up_cnx_state,
+            (long long)sess->nsmf_param.pfcp_flags);
+    ogs_assert(strerror);
+
+    ogs_error("%s", strerror);
+    ogs_assert(true == ogs_sbi_server_send_error(
+            stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+            sbi_message, strerror, NULL, NULL));
+
+    ogs_free(strerror);
 }
 
 void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
@@ -177,6 +277,7 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -189,6 +290,10 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
     switch (e->h.id) {
     case OGS_FSM_ENTRY_SIG:
         /* reset state: */
+        sess->sm_data.epc_auth_aborted = false;
+        sess->sm_data.gx_session_created = false;
+        sess->sm_data.gy_session_created = false;
+        sess->sm_data.s6b_session_created = false;
         sess->sm_data.s6b_aar_in_flight = false;
         sess->sm_data.gx_ccr_init_in_flight = false;
         sess->sm_data.gy_ccr_init_in_flight = false;
@@ -211,7 +316,7 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
                             gtp_xact,
                             &e->gtp1_message->create_pdp_context_request);
             if (gtp1_cause != OGS_GTP1_CAUSE_REQUEST_ACCEPTED) {
-                send_gtp_create_err_msg(sess, gtp_xact, gtp1_cause);
+                send_gtp_error_msg(sess, gtp_xact, gtp1_cause);
                 return;
             }
             if (send_ccr_init_req_gx_gy(sess, gtp_xact) == true)
@@ -230,7 +335,7 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
                             gtp_xact,
                             &e->gtp2_message->create_session_request);
             if (gtp2_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-                send_gtp_create_err_msg(sess, gtp_xact, gtp2_cause);
+                send_gtp_error_msg(sess, gtp_xact, gtp2_cause);
                 return;
             }
             switch (sess->gtp_rat_type) {
@@ -271,8 +376,10 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nsmf_pdusession:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_SM_CONTEXTS)
                 SWITCH(sbi_message->h.resource.component[2])
@@ -340,7 +447,7 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", sbi_message->h.service.name);
             ogs_assert(true ==
                 ogs_sbi_server_send_error(stream,
@@ -348,7 +455,7 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
                     "Invalid API name", sbi_message->h.service.name,
                     NULL));
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
-        END
+        }
         break;
 
     case SMF_EVT_5GSM_MESSAGE:
@@ -404,13 +511,14 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
 
 void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
 {
+    smf_ue_t *smf_ue = NULL;
     smf_sess_t *sess = NULL;
 
     ogs_diam_s6b_message_t *s6b_message = NULL;
     ogs_diam_gy_message_t *gy_message = NULL;
     ogs_diam_gx_message_t *gx_message = NULL;
     uint32_t diam_err;
-    bool need_gy_terminate = false;
+    bool create_error_sent = false;
 
     ogs_gtp_xact_t *gtp_xact = NULL;
 
@@ -421,6 +529,8 @@ void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
 
     sess = smf_sess_find_by_id(e->sess_id);
     ogs_assert(sess);
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    ogs_assert(smf_ue);
 
     switch (e->h.id) {
     case SMF_EVT_S6B_MESSAGE:
@@ -432,9 +542,21 @@ void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
         case OGS_DIAM_S6B_CMD_AUTHENTICATION_AUTHORIZATION:
             sess->sm_data.s6b_aar_in_flight = false;
             sess->sm_data.s6b_aaa_err = s6b_message->result_code;
-            if (s6b_message->result_code == ER_DIAMETER_SUCCESS) {
-                send_ccr_init_req_gx_gy(sess, gtp_xact);
-                return;
+            sess->sm_data.s6b_session_created =
+                s6b_message->result_code == ER_DIAMETER_SUCCESS;
+            if (!gtp_xact) {
+                ogs_error("[%s:%s] S6b AAA after GTP transaction [%d] "
+                        "was removed", smf_ue->imsi_bcd,
+                        sess->session.name, e->gtp_xact_id);
+                sess->sm_data.epc_auth_aborted = true;
+            }
+            if (sess->sm_data.s6b_session_created &&
+                !sess->sm_data.epc_auth_aborted) {
+                if (send_ccr_init_req_gx_gy(sess, gtp_xact))
+                    return;
+                /* No Initial request is pending. The helper has already
+                 * sent the Create Session error in this same event. */
+                create_error_sent = true;
             }
             goto test_can_proceed;
         }
@@ -449,24 +571,21 @@ void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
         case OGS_DIAM_GX_CMD_CODE_CREDIT_CONTROL:
             switch(gx_message->cc_request_type) {
             case OGS_DIAM_GX_CC_REQUEST_TYPE_INITIAL_REQUEST:
-                sess->sm_data.gx_ccr_init_in_flight = false;
+                sess->sm_data.gx_session_created =
+                    gx_message->result_code == ER_DIAMETER_SUCCESS;
                 if (!gtp_xact) {
-                    /* The SGW/MME GTP-C Create Session transaction has
-                     * already expired (its T3-RESPONSE elapsed under burst
-                     * load) and was freed before this Gx CCA-Initial came
-                     * back. There is no peer transaction to answer, so
-                     * abandon this session setup gracefully via the error
-                     * path instead of asserting and killing the whole SMF
-                     * (which would tear down every other UE's session). */
-                    ogs_warn("Gx CCA-Initial received but the SGW/MME GTP-C "
-                            "Create Session transaction already expired under "
-                            "load; abandoning session setup without crash");
-                    sess->sm_data.gx_cca_init_err =
-                            ER_DIAMETER_UNABLE_TO_COMPLY;
-                    goto test_can_proceed;
+                    ogs_error("[%s:%s] Gx CCA-Initial after GTP "
+                            "transaction [%d] was removed",
+                            smf_ue->imsi_bcd, sess->session.name,
+                            e->gtp_xact_id);
+                    sess->sm_data.epc_auth_aborted = true;
                 }
-                diam_err = smf_gx_handle_cca_initial_request(sess,
-                                gx_message, gtp_xact);
+                /* Keep the answer for cleanup without installing policy. */
+                diam_err = gx_message->result_code;
+                if (!sess->sm_data.epc_auth_aborted)
+                    diam_err = smf_gx_handle_cca_initial_request(sess,
+                                    gx_message, gtp_xact);
+                sess->sm_data.gx_ccr_init_in_flight = false;
                 sess->sm_data.gx_cca_init_err = diam_err;
                 goto test_can_proceed;
             }
@@ -483,21 +602,24 @@ void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
         case OGS_DIAM_GY_CMD_CODE_CREDIT_CONTROL:
             switch(gy_message->cc_request_type) {
             case OGS_DIAM_GY_CC_REQUEST_TYPE_INITIAL_REQUEST:
-                sess->sm_data.gy_ccr_init_in_flight = false;
+                /* Outer success requires termination even if MSCC fails.
+                 * Keep this across events when Gy answers before Gx. */
+                sess->sm_data.gy_session_created =
+                    gy_message->result_code == ER_DIAMETER_SUCCESS;
                 if (!gtp_xact) {
-                    /* GTP-C Create Session transaction expired before this
-                     * Gy CCA-Initial returned (same burst-load race as the
-                     * Gx path above). Abandon gracefully instead of
-                     * asserting and crashing the whole SMF. */
-                    ogs_warn("Gy CCA-Initial received but the SGW/MME GTP-C "
-                            "Create Session transaction already expired under "
-                            "load; abandoning session setup without crash");
-                    sess->sm_data.gy_cca_init_err =
-                            ER_DIAMETER_UNABLE_TO_COMPLY;
-                    goto test_can_proceed;
+                    ogs_error("[%s:%s] Gy CCA-Initial after GTP "
+                            "transaction [%d] was removed",
+                            smf_ue->imsi_bcd, sess->session.name,
+                            e->gtp_xact_id);
+                    sess->sm_data.epc_auth_aborted = true;
                 }
-                diam_err = smf_gy_handle_cca_initial_request(sess,
-                                gy_message, gtp_xact, &need_gy_terminate);
+                /* Do not install charging rules for an abandoned session. */
+                diam_err = sess->sm_data.gy_session_created ?
+                    gy_message->cca.result_code : gy_message->result_code;
+                if (!sess->sm_data.epc_auth_aborted)
+                    diam_err = smf_gy_handle_cca_initial_request(sess,
+                                    gy_message, gtp_xact);
+                sess->sm_data.gy_ccr_init_in_flight = false;
                 sess->sm_data.gy_cca_init_err = diam_err;
                 goto test_can_proceed;
             }
@@ -508,7 +630,7 @@ void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
     return;
 
 test_can_proceed:
-    /* First wait for both Gx and Gy requests to be done: */
+    /* Drain every Initial answer before terminating or freeing the session. */
     if (!sess->sm_data.s6b_aar_in_flight &&
         !sess->sm_data.gx_ccr_init_in_flight &&
         !sess->sm_data.gy_ccr_init_in_flight) {
@@ -520,43 +642,72 @@ test_can_proceed:
         if (sess->sm_data.gy_cca_init_err != ER_DIAMETER_SUCCESS)
             diam_err = sess->sm_data.gy_cca_init_err;
 
-        if (diam_err == ER_DIAMETER_SUCCESS) {
+        if (!sess->sm_data.epc_auth_aborted &&
+            !create_error_sent &&
+            diam_err == ER_DIAMETER_SUCCESS) {
             OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_establishment);
             ogs_assert(gtp_xact);
             ogs_assert(OGS_OK ==
                 smf_epc_pfcp_send_session_establishment_request(
                     sess,
                     gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID, 0));
-        } else {
-            /* Tear down Gx/Gy session if its sm_data.*init_err == ER_DIAMETER_SUCCESS */
-            if (sess->sm_data.gx_cca_init_err == ER_DIAMETER_SUCCESS) {
-                sess->sm_data.gx_ccr_term_in_flight = true;
-                smf_gx_send_ccr(
-                    sess, gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID,
-                    OGS_DIAM_GX_CC_REQUEST_TYPE_TERMINATION_REQUEST);
-            }
-            if (smf_use_gy_iface() == 1 &&
-                (sess->sm_data.gy_cca_init_err == ER_DIAMETER_SUCCESS || need_gy_terminate)) {
-                sess->sm_data.gy_ccr_term_in_flight = true;
-                smf_gy_send_ccr(
-                    sess, gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID,
-                    OGS_DIAM_GY_CC_REQUEST_TYPE_TERMINATION_REQUEST);
-            }
-            if (gtp_xact) {
-                uint8_t gtp_cause = gtp_cause_from_diameter(
-                                        gtp_xact->gtp_version, diam_err, NULL);
-                send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
-            } else {
-                /* gtp_xact == NULL means the SGW/MME Create Session
-                 * transaction already expired under load. There is no peer
-                 * transaction to send the GTP error response to; the Diameter
-                 * sessions are torn down above and the SMF session is cleaned
-                 * up when its GTP transaction timeout fires. */
-                ogs_warn("Cannot send GTP Create Session error response: "
-                        "GTP-C transaction already released under load; "
-                        "session will be cleaned up on timeout");
-            }
+            return;
         }
+
+        if (sess->sm_data.epc_auth_aborted) {
+            ogs_error("[%s:%s] Abandon EPC session establishment: "
+                    "GTP transaction [%d] was removed",
+                    smf_ue->imsi_bcd, sess->session.name, e->gtp_xact_id);
+        } else if (create_error_sent) {
+            ogs_error("[%s:%s] Cannot start Gx/Gy authentication: "
+                    "no Gy Diameter peer", smf_ue->imsi_bcd,
+                    sess->session.name);
+        } else {
+            ogs_error("[%s:%s] EPC authentication failed "
+                    "[Gx:%u,Gy:%u,S6b:%u]",
+                    smf_ue->imsi_bcd, sess->session.name,
+                    sess->sm_data.gx_cca_init_err,
+                    sess->sm_data.gy_cca_init_err,
+                    sess->sm_data.s6b_aaa_err);
+        }
+
+        if (gtp_xact && !sess->sm_data.epc_auth_aborted &&
+            !create_error_sent) {
+            uint8_t gtp_cause = gtp_cause_from_diameter(
+                                    gtp_xact->gtp_version, diam_err, NULL);
+            send_gtp_error_msg(sess, gtp_xact, gtp_cause);
+        }
+
+        /* Terminate only sessions confirmed by an Initial answer. In
+         * particular, enabled Gy and default SUCCESS values do not imply
+         * that a Diameter session was actually created. */
+        sess->sm_data.gx_ccr_term_in_flight =
+            sess->sm_data.gx_session_created;
+        sess->sm_data.gy_ccr_term_in_flight =
+            sess->sm_data.gy_session_created;
+        sess->sm_data.s6b_str_in_flight =
+            sess->sm_data.s6b_session_created;
+
+        if (!sess->sm_data.gx_ccr_term_in_flight &&
+            !sess->sm_data.gy_ccr_term_in_flight &&
+            !sess->sm_data.s6b_str_in_flight) {
+            OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
+            return;
+        }
+
+        OGS_FSM_TRAN(s, smf_gsm_state_wait_epc_auth_release);
+
+        /* No GTP association: wait_epc_auth_release must not send a Delete
+         * Session Response for this failed Create Session transaction. */
+        if (sess->sm_data.gx_ccr_term_in_flight)
+            smf_gx_send_ccr(sess, OGS_INVALID_POOL_ID,
+                    OGS_DIAM_GX_CC_REQUEST_TYPE_TERMINATION_REQUEST);
+        if (sess->sm_data.gy_ccr_term_in_flight)
+            smf_gy_send_ccr(sess, OGS_INVALID_POOL_ID,
+                    OGS_DIAM_GY_CC_REQUEST_TYPE_TERMINATION_REQUEST);
+        if (sess->sm_data.s6b_str_in_flight)
+            smf_s6b_send_str(sess, NULL,
+                    OGS_DIAM_TERMINATION_CAUSE_DIAMETER_LOGOUT);
     }
 }
 
@@ -569,6 +720,7 @@ void smf_gsm_state_wait_5gc_sm_policy_association(ogs_fsm_t *s, smf_event_t *e)
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -591,8 +743,10 @@ void smf_gsm_state_wait_5gc_sm_policy_association(ogs_fsm_t *s, smf_event_t *e)
         smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
         ogs_assert(smf_ue);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nudm_sdm:
             stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             ogs_assert(stream_id >= OGS_MIN_POOL_ID &&
                     stream_id <= OGS_MAX_POOL_ID);
@@ -672,7 +826,7 @@ void smf_gsm_state_wait_5gc_sm_policy_association(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_SMPOLICYCONTROL)
+        case OpenAPI_service_name_npcf_smpolicycontrol:
             /*
              * TS23.502
              * 4.3.2.2 UE Requested PDU Session Establishment
@@ -735,11 +889,11 @@ void smf_gsm_state_wait_5gc_sm_policy_association(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("[%s:%d] Invalid API name [%s]",
                     smf_ue->supi, sess->psi, sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
         break;
 
     default:
@@ -754,11 +908,10 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
     smf_sess_t *sess = NULL;
     uint8_t pfcp_cause, gtp_cause;
     smf_n1_n2_message_transfer_param_t param;
-
     ogs_pfcp_xact_t *pfcp_xact = NULL;
     ogs_pfcp_message_t *pfcp_message = NULL;
     int rv;
-
+    ogs_gtp_xact_t *gtp_xact = NULL;
     ogs_sbi_stream_t *stream = NULL;
 
     ogs_assert(s);
@@ -786,8 +939,7 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
         switch (pfcp_message->h.type) {
         case OGS_PFCP_SESSION_ESTABLISHMENT_RESPONSE_TYPE:
             if (pfcp_xact->epc) {
-                ogs_gtp_xact_t *gtp_xact =
-                    ogs_gtp_xact_find_by_id(pfcp_xact->assoc_xact_id);
+                gtp_xact = ogs_gtp_xact_find_by_id(pfcp_xact->assoc_xact_id);
                 ogs_assert(gtp_xact);
 
                 pfcp_cause = smf_epc_n4_handle_session_establishment_response(
@@ -797,7 +949,7 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                     /* FIXME: tear down Gy and Gx */
                     gtp_cause = gtp_cause_from_pfcp(
                                     pfcp_cause, gtp_xact->gtp_version);
-                    send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
+                    send_gtp_error_msg(sess, gtp_xact, gtp_cause);
                     return;
                 }
 
@@ -847,14 +999,14 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                 }
                 if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
                     r = smf_sbi_discover_and_send(
-                            OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+                            OpenAPI_service_name_nsmf_pdusession, NULL,
                             smf_nsmf_pdusession_build_create_data,
                             sess, NULL, 0, NULL);
                     ogs_expect(r == OGS_OK);
                     ogs_assert(r != OGS_ERROR);
                 } else if (HOME_ROUTED_ROAMING_IN_HSMF(sess)) {
                     r = smf_sbi_discover_and_send(
-                            OGS_SBI_SERVICE_TYPE_NUDM_UECM, NULL,
+                            OpenAPI_service_name_nudm_uecm, NULL,
                             smf_nudm_uecm_build_registration,
                             sess, stream,
                             SMF_UECM_STATE_REGISTERED_HR,
@@ -894,7 +1046,15 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
     case SMF_EVT_N4_TIMER:
         switch (e->h.timer_id) {
         case SMF_TIMER_PFCP_NO_ESTABLISHMENT_RESPONSE:
-            OGS_FSM_TRAN(s, smf_gsm_state_5gc_n1_n2_reject);
+            if (sess->epc) {
+                gtp_xact = ogs_gtp_xact_find_by_id(e->gtp_xact_id);
+                if (send_ccr_termination_req_gx_gy_s6b(sess, gtp_xact) == true)
+                    OGS_FSM_TRAN(s, smf_gsm_state_wait_epc_auth_release);
+                else
+                    OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
+            } else {
+                OGS_FSM_TRAN(s, smf_gsm_state_5gc_n1_n2_reject);
+            }
             break;
         default:
             ogs_error("Unknown timer[%s:%d]",
@@ -922,7 +1082,6 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
 
     ogs_pfcp_xact_t *pfcp_xact = NULL;
     ogs_pfcp_message_t *pfcp_message = NULL;
-    uint8_t pfcp_cause;
 
     ogs_diam_gy_message_t *gy_message = NULL;
     uint32_t diam_err;
@@ -932,6 +1091,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_gtp_xact_t *gtp_xact = NULL;
     ogs_gtp1_message_t *gtp1_message = NULL;
@@ -965,8 +1125,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                             gtp_xact,
                             &gtp1_message->delete_pdp_context_request);
             if (gtp1_cause != OGS_GTP1_CAUSE_REQUEST_ACCEPTED) {
-                ogs_gtp1_send_error_message(gtp_xact, sess->sgw_s5c_teid,
-                        OGS_GTP1_DELETE_PDP_CONTEXT_RESPONSE_TYPE, gtp1_cause);
+                send_gtp_error_msg(sess, gtp_xact, gtp1_cause);
                 return;
             }
             OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
@@ -984,8 +1143,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                             sess, gtp_xact,
                             &gtp2_message->delete_session_request);
             if (gtp2_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-                ogs_gtp2_send_error_message(gtp_xact, sess->sgw_s5c_teid,
-                        OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE, gtp2_cause);
+                send_gtp_error_msg(sess, gtp_xact, gtp2_cause);
                 return;
             }
             OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
@@ -994,7 +1152,16 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
             release = smf_s5c_handle_delete_bearer_response(
                 sess, gtp_xact, &e->gtp2_message->delete_bearer_response);
             if (release) {
-                OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
+                if (OGS_FSM_CHECK(&sess->pfcp_node->sm, smf_pfcp_state_associated)) {
+                    OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
+                } else {
+                    /* Node is not associated so session cannot exist there anymore,
+                     * hence release this session immediately */
+                    if (send_ccr_termination_req_gx_gy_s6b(sess, NULL) == true)
+                        OGS_FSM_TRAN(s, smf_gsm_state_wait_epc_auth_release);
+                    else
+                        OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
+                    }
             }
             break;
 
@@ -1035,9 +1202,10 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
             break;
 
         case OGS_PFCP_SESSION_REPORT_REQUEST_TYPE:
-            pfcp_cause = smf_n4_handle_session_report_request(sess, pfcp_xact,
+            release = smf_n4_handle_session_report_request(sess, pfcp_xact,
                             &pfcp_message->pfcp_session_report_request);
-            if (pfcp_cause != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
+            if (release) {
+                e->h.sbi.state = OGS_PFCP_DELETE_TRIGGER_LOCAL_INITIATED;
                 OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
             }
             break;
@@ -1085,8 +1253,10 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nsmf_pdusession:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_SM_CONTEXTS)
                 SWITCH(sbi_message->h.resource.component[2])
@@ -1155,8 +1325,26 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     if (rc == true) {
                         switch (sess->nsmf_param.request_indication) {
                         case OpenAPI_request_indication_UE_REQ_PDU_SES_MOD:
-                            if (sess->nsmf_param.up_cnx_state ==
-                                    OpenAPI_up_cnx_state_DEACTIVATED) {
+    /*
+     * UE requested H-SMF update supports two forms:
+     *
+     * 1. UP connection state transition
+     *    - upCnxState must be present.
+     *    - Only DEACTIVATED, ACTIVATING and ACTIVATED are valid.
+     *
+     * 2. QoS Flow modification
+     *    - upCnxState must be absent.
+     *    - pfcp_flags must be non-zero.
+     *
+     * Any other combination is rejected as Bad Request because it can be
+     * provided by the peer.
+     */
+                            if (hsmf_update_has_up_cnx_state(sess)) {
+                                bool far_update = false;
+
+                                switch (sess->nsmf_param.up_cnx_state) {
+                                case OpenAPI_up_cnx_state_DEACTIVATED:
+                                    hsmf_update_record_up_cnx_state(sess);
     /*
      * UE-requested PDU Session Modification(DEACTIVATED)
      *
@@ -1175,14 +1363,16 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
      * 8.  V: smf_sbi_send_sm_context_updated_data_up_cnx_state(
      *          OpenAPI_up_cnx_state_DEACTIVATED)
      */
-                                ogs_assert(OGS_OK ==
-                                    smf_5gc_pfcp_send_all_pdr_modification_request(
-                                        sess, stream,
-                                        OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
-                                        OGS_PFCP_MODIFY_DL_ONLY|
-                                        OGS_PFCP_MODIFY_DEACTIVATE, 0, 0));
-                            } else if (sess->nsmf_param.up_cnx_state ==
-                                    OpenAPI_up_cnx_state_ACTIVATING) {
+                                    ogs_assert(OGS_OK ==
+                                        smf_5gc_pfcp_send_all_pdr_modification_request(
+                                            sess, stream,
+                                            OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
+                                            OGS_PFCP_MODIFY_DL_ONLY|
+                                            OGS_PFCP_MODIFY_DEACTIVATE, 0, 0));
+                                    break;
+
+                                case OpenAPI_up_cnx_state_ACTIVATING:
+                                    hsmf_update_record_up_cnx_state(sess);
     /*
      * UE-requested PDU Session Modification(ACTIVATING)
      *
@@ -1197,11 +1387,14 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
      *          OpenAPI_up_cnx_state_ACTIVATING,
      *          OpenAPI_n2_sm_info_type_PDU_RES_SETUP_REQ, n2smbuf)
      */
-                                ogs_assert(true ==
-                                        ogs_sbi_send_http_status_no_content(
-                                            stream));
-                            } else if (sess->nsmf_param.up_cnx_state ==
-                                    OpenAPI_up_cnx_state_ACTIVATED) {
+                                    ogs_assert(true ==
+                                            ogs_sbi_send_http_status_no_content(
+                                                stream));
+                                    break;
+
+                                case OpenAPI_up_cnx_state_ACTIVATED:
+                                    hsmf_update_record_up_cnx_state(sess);
+
     /*
      * UE-requested PDU Session Modification(ACTIVATED)
      *
@@ -1226,50 +1419,60 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
      *        case SMF_UPDATE_STATE_HR_ACTIVATED_FROM_NON_ACTIVATING:
      *           ogs_sbi_send_http_status_no_content
      */
-                                bool far_update = false;
-
-                                if (memcmp(
-                                        &sess->nsmf_param.dl_ip,
-                                        &sess->remote_dl_ip,
-                                        sizeof(sess->nsmf_param.dl_ip)) != 0 ||
-                                    sess->nsmf_param.dl_teid !=
-                                        sess->remote_dl_teid)
-                                    far_update = true;
-
-                                ogs_list_for_each(
-                                        &sess->bearer_list, qos_flow) {
-                                    ogs_pfcp_far_t *dl_far = qos_flow->dl_far;
-                                    ogs_assert(dl_far);
-
-                                    if (dl_far->apply_action !=
-                                            OGS_PFCP_APPLY_ACTION_FORW)
+                                    if (memcmp(
+                                            &sess->nsmf_param.dl_ip,
+                                            &sess->remote_dl_ip,
+                                            sizeof(
+                                                sess->nsmf_param.dl_ip)) != 0 ||
+                                        sess->nsmf_param.dl_teid !=
+                                            sess->remote_dl_teid)
                                         far_update = true;
 
-                                    dl_far->apply_action =
-                                        OGS_PFCP_APPLY_ACTION_FORW;
-                                    ogs_assert(OGS_OK ==
-                                        ogs_pfcp_ip_to_outer_header_creation(
-                                            &sess->remote_dl_ip,
-                                            &dl_far->outer_header_creation,
-                                            &dl_far->outer_header_creation_len)
-                                        );
-                                    dl_far->outer_header_creation.teid =
-                                        sess->remote_dl_teid;
-                                }
+                                    ogs_list_for_each(
+                                            &sess->bearer_list, qos_flow) {
+                                        ogs_pfcp_far_t *dl_far =
+                                            qos_flow->dl_far;
+                                        ogs_assert(dl_far);
 
-                                if (far_update) {
-                                    ogs_assert(OGS_OK ==
-                                        smf_5gc_pfcp_send_all_pdr_modification_request(
-                                            sess, stream,
-                                            OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
-                                            OGS_PFCP_MODIFY_DL_ONLY|
-                                            OGS_PFCP_MODIFY_ACTIVATE, 0, 0));
-                                } else {
-                                    ogs_assert(true ==
-                                            ogs_sbi_send_http_status_no_content(
-                                                stream));
+                                        if (dl_far->apply_action !=
+                                                OGS_PFCP_APPLY_ACTION_FORW)
+                                            far_update = true;
+
+                                        dl_far->apply_action =
+                                            OGS_PFCP_APPLY_ACTION_FORW;
+                                        ogs_assert(OGS_OK ==
+                                            ogs_pfcp_ip_to_outer_header_creation(
+                                                &sess->remote_dl_ip,
+                                                &dl_far->outer_header_creation,
+                                                &dl_far->
+                                                    outer_header_creation_len)
+                                            );
+                                        dl_far->outer_header_creation.teid =
+                                            sess->remote_dl_teid;
+                                    }
+
+                                    if (far_update) {
+                                        ogs_assert(OGS_OK ==
+                                            smf_5gc_pfcp_send_all_pdr_modification_request(
+                                                sess, stream,
+                                                OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|
+                                                OGS_PFCP_MODIFY_DL_ONLY|
+                                                OGS_PFCP_MODIFY_ACTIVATE,
+                                                0, 0));
+                                    } else {
+                                        ogs_assert(true ==
+                                                ogs_sbi_send_http_status_no_content(
+                                                    stream));
+                                    }
+                                    break;
+
+                                default:
+                                    hsmf_update_send_bad_request(
+                                            stream, sbi_message, sess,
+                                            "unsupported upCnxState");
+                                    break;
                                 }
-                            } else if (sess->nsmf_param.pfcp_flags) {
+                            } else if (hsmf_update_has_qos_modification(sess)) {
                                 ogs_assert(true ==
                                         ogs_sbi_send_http_status_no_content(
                                             stream));
@@ -1281,11 +1484,9 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                                             OGS_PFCP_MODIFY_UE_REQUESTED|
                                             sess->nsmf_param.pfcp_flags, 0));
                             } else {
-                                ogs_fatal("Invalid [upCnxState:%d]"
-                                        "[pfcp_flags:0x%llx]",
-                                        sess->nsmf_param.up_cnx_state,
-                                        (long long)sess->nsmf_param.pfcp_flags);
-                                ogs_assert_if_reached();
+                                hsmf_update_send_bad_request(
+                                        stream, sbi_message, sess,
+                                        "missing upCnxState and pfcp_flags");
                             }
                             break;
                         case OpenAPI_request_indication_UE_REQ_PDU_SES_REL:
@@ -1366,7 +1567,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
      * In step 1a/1f, upon receiving Nsmf_PDUSession_Update from V-SMF,
      * H-SMF SHALL immediately send the Update Response, then issue PFCP
      * Session Deletion. This ordering is per the standard, even for duplicate
-     * sessions, and may overlap with AMF?s concurrent Create Session.
+     * sessions, and may overlap with AMF’s concurrent Create Session.
      *
      * 1a. (UE initiated release)
      * 1f. This step is the same as step 1f in clause 4.3.4.2,
@@ -1545,7 +1746,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", sbi_message->h.service.name);
             ogs_assert(true ==
                 ogs_sbi_server_send_error(stream,
@@ -1553,7 +1754,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     "Invalid API name", sbi_message->h.service.name,
                     NULL));
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
-        END
+        }
         break;
 
     case OGS_EVENT_SBI_CLIENT:
@@ -1567,8 +1768,10 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
         if (stream_id >= OGS_MIN_POOL_ID && stream_id <= OGS_MAX_POOL_ID)
             stream = ogs_sbi_stream_find_by_id(stream_id);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 smf_namf_comm_handle_n1_n2_message_transfer(
@@ -1583,7 +1786,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        case OpenAPI_service_name_nsmf_pdusession:
             stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             if (stream_id >= OGS_MIN_POOL_ID && stream_id <= OGS_MAX_POOL_ID)
                 stream = ogs_sbi_stream_find_by_id(stream_id);
@@ -1595,24 +1798,15 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     SWITCH(sbi_message->h.resource.component[2])
                     CASE(OGS_SBI_RESOURCE_NAME_MODIFY)
 /*
- * PFCP delete triggers are defined in lib/pfcp/xact.h (values 1?7).
+ * PFCP delete triggers are defined in lib/pfcp/xact.h (values 1–7).
  * To avoid overlap with OGS_PFCP_DELETE_TRIGGER_*, SMF states use:
- *   - UPDATE_STATE_BASE at 0x10?0x14
- *   - UECM_STATE_BASE   at 0x20?0x23
+ *   - UPDATE_STATE_BASE at 0x10–0x14
+ *   - UECM_STATE_BASE   at 0x20–0x23
  * HR flag is bit 7 (0x80).
  */
                         switch (e->h.sbi.state) {
                         case OGS_PFCP_DELETE_TRIGGER_UE_REQUESTED:
-                            if (sess->amf_to_vsmf_release_stream_id >=
-                                    OGS_MIN_POOL_ID &&
-                                sess->amf_to_vsmf_release_stream_id <=
-                                    OGS_MAX_POOL_ID)
-                                ogs_error("UE requested release stream ID [%d]"
-                                        "has not been used yet",
-                                        sess->amf_to_vsmf_release_stream_id);
-                            /* Store Stream ID */
-                            sess->amf_to_vsmf_release_stream_id =
-                                ogs_sbi_id_from_stream(stream);
+                            /* The AMF stream was stored before the update. */
                             break;
                         case OGS_PFCP_DELETE_TRIGGER_AMF_UPDATE_SM_CONTEXT:
     /*
@@ -1729,15 +1923,11 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                                     sess, stream, OpenAPI_ho_state_COMPLETED);
                             break;
                         case SMF_UPDATE_STATE_UE_REQ_MOD:
-                            if (sess->amf_to_vsmf_modify_stream_id >=
-                                    OGS_MIN_POOL_ID &&
-                                sess->amf_to_vsmf_modify_stream_id <=
-                                    OGS_MAX_POOL_ID)
-                                ogs_error("UE requested modification stream ID "
-                                        "[%d] has not been used yet",
-                                        sess->amf_to_vsmf_modify_stream_id);
-                            sess->amf_to_vsmf_modify_stream_id =
-                                ogs_sbi_id_from_stream(stream);
+                            /*
+                             * AMF stream was stored when HsmfUpdateData
+                             * was sent. VsmfUpdateData may already have
+                             * consumed it before this response arrives.
+                             */
                             break;
                         default:
                             ogs_fatal("Unknown state [0x%x]", e->h.sbi.state);
@@ -1847,11 +2037,11 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("[%s:%d] Invalid API name [%s]",
                     smf_ue->supi, sess->psi, sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
         break;
 
     case SMF_EVT_5GSM_MESSAGE:
@@ -1876,10 +2066,26 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                 sess->nsmf_param.request_indication =
                     OpenAPI_request_indication_UE_REQ_PDU_SES_MOD;
 
+                /*
+                 * VsmfUpdateData from the H-SMF can overtake the 204
+                 * response to HsmfUpdateData on the way through SCP/SEPP,
+                 * so the AMF stream is stored here rather than when
+                 * the 204 response arrives.
+                 */
+                if (sess->amf_to_vsmf_modify_stream_id >= OGS_MIN_POOL_ID &&
+                    sess->amf_to_vsmf_modify_stream_id <= OGS_MAX_POOL_ID)
+                    ogs_error("UE requested modification stream ID "
+                            "[%d] has not been used yet",
+                            sess->amf_to_vsmf_modify_stream_id);
+                sess->amf_to_vsmf_modify_stream_id =
+                    ogs_sbi_id_from_stream(stream);
+
                 r = smf_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+                        OpenAPI_service_name_nsmf_pdusession, NULL,
                         smf_nsmf_pdusession_build_hsmf_update_data,
                         sess, stream, SMF_UPDATE_STATE_UE_REQ_MOD, NULL);
+                if (r != OGS_OK)
+                    sess->amf_to_vsmf_modify_stream_id = OGS_INVALID_POOL_ID;
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
             } else {
@@ -1922,17 +2128,24 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
      *        OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_ACTIVATE
      */
                 ogs_sbi_stream_t *vsmf_to_hsmf_modify_stream = NULL;
-                if (sess->vsmf_to_hsmf_modify_stream_id >= OGS_MIN_POOL_ID &&
-                    sess->vsmf_to_hsmf_modify_stream_id <= OGS_MAX_POOL_ID)
+                ogs_pool_id_t stream_id = sess->vsmf_to_hsmf_modify_stream_id;
+
+                /* Consume the ID even if the H-SMF stream has expired. */
+                sess->vsmf_to_hsmf_modify_stream_id = OGS_INVALID_POOL_ID;
+                if (stream_id >= OGS_MIN_POOL_ID &&
+                    stream_id <= OGS_MAX_POOL_ID) {
                     vsmf_to_hsmf_modify_stream =
-                        ogs_sbi_stream_find_by_id(
-                                sess->vsmf_to_hsmf_modify_stream_id);
+                        ogs_sbi_stream_find_by_id(stream_id);
+                    if (!vsmf_to_hsmf_modify_stream)
+                        ogs_warn("[%s:%d] H-SMF modification stream "
+                                "has already been removed [%d]",
+                                smf_ue->supi, sess->psi, stream_id);
+                }
 
                 if (vsmf_to_hsmf_modify_stream) {
                     ogs_assert(true ==
                             ogs_sbi_send_http_status_no_content(
                                 vsmf_to_hsmf_modify_stream));
-                    sess->vsmf_to_hsmf_modify_stream_id = OGS_INVALID_POOL_ID;
                 }
             }
             break;
@@ -2135,7 +2348,7 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     OpenAPI_request_indication_NW_REQ_PDU_SES_REL;
 
                 r = smf_sbi_discover_and_send(
-                        OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+                        OpenAPI_service_name_nsmf_pdusession, NULL,
                         smf_nsmf_pdusession_build_vsmf_update_data,
                         sess, NULL, e->h.sbi.state, NULL);
                 ogs_expect(r == OGS_OK);
@@ -2206,12 +2419,15 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ogs_pfcp_xact_t *pfcp_xact = NULL;
     ogs_pfcp_message_t *pfcp_message = NULL;
 
     uint8_t pfcp_cause, gtp_cause;
     ogs_gtp_xact_t *gtp_xact = NULL;
+
+    ogs_pkbuf_t *n1smbuf = NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -2266,15 +2482,30 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                             &pfcp_message->pfcp_session_deletion_response);
                 if (pfcp_cause != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
                     /* FIXME: tear down Gy and Gx */
-                    ogs_assert(gtp_xact);
-                    gtp_cause = gtp_cause_from_pfcp(
-                            pfcp_cause, gtp_xact->gtp_version);
-                    send_gtp_delete_err_msg(sess, gtp_xact, gtp_cause);
+                    if (gtp_xact) {
+                        gtp_cause = gtp_cause_from_pfcp(
+                                pfcp_cause, gtp_xact->gtp_version);
+                        send_gtp_error_msg(sess, gtp_xact, gtp_cause);
+                    } else {
+        /*
+         * No peer is waiting for a response, so the session has to be
+         * dropped here.
+         */
+                        ogs_error("No GTP transaction : "
+                                "PFCP Cause [%d] cannot be reported, "
+                                "releasing the session locally", pfcp_cause);
+                        OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
+                    }
                     break;
                 }
                 if (send_ccr_termination_req_gx_gy_s6b(
-                            sess, gtp_xact) == true)
+                            sess, gtp_xact) == true) {
                     OGS_FSM_TRAN(s, smf_gsm_state_wait_epc_auth_release);
+                } else if (!gtp_xact) {
+                    ogs_error("No GTP transaction : "
+                            "Releasing the session locally");
+                    OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
+                }
                 /* else: free session? */
             } else {
                 int r, trigger;
@@ -2303,7 +2534,25 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
 
                 if (trigger == OGS_PFCP_DELETE_TRIGGER_LOCAL_INITIATED) {
 
-                    ogs_error("OLD Session Released");
+                    /*
+                     * There is no peer waiting for a response, so the
+                     * remaining PCF and UDM resources have to be released
+                     * here.
+                     *
+                     * SMF_UECM_STATE_DEREG_BY_N1N2 ends with
+                     * smf_sbi_send_sm_context_status_notify() rather than a
+                     * response on a stream we do not have, and it is the SMF
+                     * that decided to release the session.
+                     */
+                    ogs_error("Session Released locally");
+
+                    r = smf_sbi_cleanup_session(
+                            sess, NULL,
+                            SMF_UECM_STATE_DEREG_BY_N1N2,
+                            SMF_SBI_CLEANUP_MODE_POLICY_FIRST);
+                    ogs_expect(r == OGS_OK);
+                    ogs_assert(r != OGS_ERROR);
+
                     OGS_FSM_TRAN(s, smf_gsm_state_5gc_session_will_deregister);
 
                 } else if (trigger == OGS_PFCP_DELETE_TRIGGER_UE_REQUESTED) {
@@ -2357,7 +2606,7 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                         }
 
                         r = smf_sbi_discover_and_send(
-                                OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+                                OpenAPI_service_name_nsmf_pdusession, NULL,
                                 smf_nsmf_pdusession_build_vsmf_update_data,
                                 sess, NULL, trigger, NULL);
                         ogs_expect(r == OGS_OK);
@@ -2414,12 +2663,11 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                                 ogs_sbi_stream_find_by_id(
                                         sess->amf_to_vsmf_release_stream_id);
 
+                        sess->amf_to_vsmf_release_stream_id = OGS_INVALID_POOL_ID;
                         if (amf_to_vsmf_release_stream) {
                             ogs_assert(true ==
                                     ogs_sbi_send_http_status_no_content(
                                         amf_to_vsmf_release_stream));
-                            sess->amf_to_vsmf_release_stream_id =
-                                OGS_INVALID_POOL_ID;
                         }
 
                         memset(&param, 0, sizeof(param));
@@ -2458,6 +2706,24 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
          * Related Issue #2396
          */
 
+                        /*
+                         * N1/N2 released updates from the AMF can arrive
+                         * before the N1N2MessageTransfer response,
+                         * so the H-SMF stream is stored here rather than
+                         * when that response arrives.
+                         */
+                        if (stream) {
+                            if (sess->vsmf_to_hsmf_release_stream_id >=
+                                    OGS_MIN_POOL_ID &&
+                                sess->vsmf_to_hsmf_release_stream_id <=
+                                    OGS_MAX_POOL_ID)
+                                ogs_error("N1 N2 released stream ID [%d]"
+                                        "has not been used yet",
+                                        sess->vsmf_to_hsmf_release_stream_id);
+                            sess->vsmf_to_hsmf_release_stream_id =
+                                ogs_sbi_id_from_stream(stream);
+                        }
+
                         smf_namf_comm_send_n1_n2_message_transfer(
                                 sess, stream, &param);
 
@@ -2465,6 +2731,52 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                                 smf_gsm_state_wait_5gc_n1_n2_release);
 
                     } else {
+
+                        if (!stream) {
+                            /*
+                             * SBI stream was torn down before this
+                             * PFCP-deletion-completion event fired
+                             * (peer RST_STREAM, idle-stream timeout,
+                             * premature client disconnect). The N1/N2
+                             * release messages cannot reach the AMF,
+                             * so the build is skipped entirely.
+                             * Transitioning to
+                             * smf_gsm_state_wait_5gc_n1_n2_release
+                             * would deadlock the FSM waiting for
+                             * completion of a release procedure that
+                             * was never started.
+                             *
+                             * Take the local-only cleanup path through
+                             * smf_sbi_cleanup_session(POLICY_FIRST),
+                             * which internally dispatches to PCF
+                             * SmPolicy delete, UDM SDM unsubscribe, or
+                             * UDM UECM deregistration depending on
+                             * which SBI state is associated with the
+                             * session. The chain converges at the
+                             * UDM UECM DEREG_BY_N1N2 handler, which
+                             * issues smf_sbi_send_sm_context_status_notify()
+                             * to keep AMF state consistent and then
+                             * SMF_SESS_CLEAR(sess).
+                             */
+                            smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+                            ogs_assert(smf_ue);
+
+                            ogs_error("[%s:%d] Stream removed before "
+                                    "PFCP deletion completion; "
+                                    "proceeding with local-only release",
+                                    smf_ue->supi, sess->psi);
+
+                            r = smf_sbi_cleanup_session(
+                                    sess, NULL,
+                                    SMF_UECM_STATE_DEREG_BY_N1N2,
+                                    SMF_SBI_CLEANUP_MODE_POLICY_FIRST);
+                            ogs_expect(r == OGS_OK);
+                            ogs_assert(r != OGS_ERROR);
+
+                            OGS_FSM_TRAN(s,
+                                    smf_gsm_state_5gc_session_will_deregister);
+                            break;
+                        }
 
                         n1smbuf = gsm_build_pdu_session_release_command(
                                 sess, OGS_5GSM_CAUSE_REGULAR_DEACTIVATION);
@@ -2500,7 +2812,7 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
      * In step 1f, upon receiving Nsmf_PDUSession_Update from V-SMF, H-SMF
      * SHALL immediately send the Update Response, then issue PFCP Session
      * Deletion. This ordering is per the standard, even for duplicate
-     * sessions, and may overlap with AMF?s concurrent Create Session.
+     * sessions, and may overlap with AMF’s concurrent Create Session.
      *
      * 1.  V: OGS_PFCP_MODIFY_HOME_ROUTED_ROAMING|OGS_PFCP_MODIFY_UL_ONLY|
      *        OGS_PFCP_MODIFY_DEACTIVATE
@@ -2704,10 +3016,10 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
         smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
         ogs_assert(smf_ue);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_SMPOLICYCONTROL)
-            ogs_pkbuf_t *n1smbuf = NULL;
-
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_npcf_smpolicycontrol:
             stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             ogs_assert(stream_id >= OGS_MIN_POOL_ID &&
                     stream_id <= OGS_MAX_POOL_ID);
@@ -2730,7 +3042,7 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                     stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
                     n1smbuf, OpenAPI_n2_sm_info_type_NULL, NULL);
             break;
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        case OpenAPI_service_name_nsmf_pdusession:
             stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             if (stream_id >= OGS_MIN_POOL_ID && stream_id <= OGS_MAX_POOL_ID)
                 stream = ogs_sbi_stream_find_by_id(stream_id);
@@ -2743,25 +3055,19 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                     CASE(OGS_SBI_RESOURCE_NAME_MODIFY)
                         switch (e->h.sbi.state) {
                         case OGS_PFCP_DELETE_TRIGGER_UE_REQUESTED:
-/*
- * Handle unexpected arrival of Nsmf_PDUSession_UpdateSMContext Response
- * (step 1a) after PFCP deletion triggered by UE (step 3a).
- * In Home-routed Roaming (TS 23.502 Section 4.3.4.3) SMContext Response is
- * expected before SMContext Request (step 3a), but races can invert order,
- * causing smf_gsm_state_wait_pfcp_deletion on PFCP release (steps 4a/4b).
- * Without handling the delayed Response here, no handler exists and a crash
- * results. Storing the stream ID lets the Response be processed safely.
- */
-                            if (sess->amf_to_vsmf_release_stream_id >=
-                                    OGS_MIN_POOL_ID &&
-                                sess->amf_to_vsmf_release_stream_id <=
-                                    OGS_MAX_POOL_ID)
-                                ogs_error("UE requested release stream ID [%d]"
-                                        "has not been used yet",
-                                        sess->amf_to_vsmf_release_stream_id);
-                            /* Store Stream ID */
-                            sess->amf_to_vsmf_release_stream_id =
-                                ogs_sbi_id_from_stream(stream);
+                            /* PFCP deletion will complete the AMF request. */
+                            break;
+                        case SMF_UPDATE_STATE_DEACTIVATED:
+                            /*
+                             * Deactivation of a stale NG context can overlap
+                             * duplicate-PSI release. Complete its AMF update
+                             * even if the H-SMF response arrives after PFCP
+                             * deletion has started; keep deletion in progress.
+                             */
+                            if (stream)
+                                smf_sbi_send_sm_context_updated_data_up_cnx_state(
+                                        sess, stream,
+                                        OpenAPI_up_cnx_state_DEACTIVATED);
                             break;
 /*
  * Assume PDU session establishment and deregistration occur simultaneously.
@@ -2841,7 +3147,7 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 ogs_error("[%s:%d] Ignore SBI message "
@@ -2858,17 +3164,50 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("[%s:%d] Invalid API name [%s]",
                     smf_ue->supi, sess->psi, sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
+        break;
+
+    case SMF_EVT_NGAP_MESSAGE:
+        smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+        ogs_assert(smf_ue);
+
+        stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
+        ogs_assert(stream_id >= OGS_MIN_POOL_ID &&
+                stream_id <= OGS_MAX_POOL_ID);
+
+        stream = ogs_sbi_stream_find_by_id(stream_id);
+        if (!stream) {
+            ogs_error("STREAM has already been removed [%d]", stream_id);
+            break;
+        }
+
+        switch (e->ngap.type) {
+        case OpenAPI_n2_sm_info_type_PDU_RES_SETUP_RSP:
+            /*
+             * The N2 SM info of /modify is queued again, so a /release
+             * already in the queue can move the session here first.
+             * Acknowledge it without activating the session being deleted,
+             * as in smf_gsm_state_wait_5gc_n1_n2_release().
+             */
+            ogs_warn("[%s:%d] Late PDU_RES_SETUP_RSP during PFCP deletion",
+                    smf_ue->supi, sess->psi);
+            ogs_assert(true == ogs_sbi_send_http_status_no_content(stream));
+            break;
+        default:
+            ogs_error("[%s:%d] Unknown message[%d]",
+                    smf_ue->supi, sess->psi, e->ngap.type);
+        }
         break;
     }
 }
 
 void smf_gsm_state_wait_epc_auth_release(ogs_fsm_t *s, smf_event_t *e)
 {
+    smf_ue_t *smf_ue = NULL;
     smf_sess_t *sess = NULL;
 
     ogs_diam_gx_message_t *gx_message = NULL;
@@ -2885,6 +3224,8 @@ void smf_gsm_state_wait_epc_auth_release(ogs_fsm_t *s, smf_event_t *e)
 
     sess = smf_sess_find_by_id(e->sess_id);
     ogs_assert(sess);
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    ogs_assert(smf_ue);
 
     switch (e->h.id) {
     case OGS_FSM_ENTRY_SIG:
@@ -2944,8 +3285,13 @@ void smf_gsm_state_wait_epc_auth_release(ogs_fsm_t *s, smf_event_t *e)
         switch(s6b_message->cmd_code) {
         case OGS_DIAM_S6B_CMD_SESSION_TERMINATION:
             sess->sm_data.s6b_str_in_flight = false;
-            /* TODO: validate error code from message below: */
+            /* Release locally even if AAA rejects the STR. Preserve the
+             * existing GTP deletion result instead of propagating STA errors. */
             sess->sm_data.s6b_sta_err = ER_DIAMETER_SUCCESS;
+            if (s6b_message->result_code != ER_DIAMETER_SUCCESS)
+                ogs_error("[%s:%s] S6b termination failed [%u]",
+                        smf_ue->imsi_bcd, sess->session.name,
+                        s6b_message->result_code);
             goto test_can_proceed;
         }
         break;
@@ -2968,24 +3314,51 @@ test_can_proceed:
         /* Initiated by peer request, let's answer: */
         if (gtp_xact) {
             if (diam_err == ER_DIAMETER_SUCCESS) {
-                /*
-                 * 1. MME sends Delete Session Request to SGW/SMF.
-                 * 2. SMF sends Delete Session Response to SGW/MME.
-                 */
                 switch (gtp_xact->gtp_version) {
                 case 1:
-                    smf_gtp1_send_delete_pdp_context_response(
-                                sess, gtp_xact);
+                    switch (gtp_xact->seq[0].type) {
+                    case OGS_GTP1_DELETE_PDP_CONTEXT_REQUEST_TYPE:
+                        smf_gtp1_send_delete_pdp_context_response(
+                                    sess, gtp_xact);
+                        break;
+                    case OGS_GTP1_CREATE_PDP_CONTEXT_REQUEST_TYPE:
+                        send_gtp_error_msg(sess, gtp_xact,
+                                OGS_GTP1_CAUSE_SYSTEM_FAILURE);
+                        break;
+                    default:
+                        ogs_error(
+                            "Replying GTPv1C type %u not implemented!",
+                            gtp_xact->seq[0].type);
+                        break;
+                    }
                     break;
                 case 2:
-                    smf_gtp2_send_delete_session_response(
-                                sess, gtp_xact);
+                    switch (gtp_xact->seq[0].type) {
+                    case OGS_GTP2_DELETE_SESSION_REQUEST_TYPE:
+                        /* Regular path:
+                        * 1. MME sends Delete Session Request to SGW/SMF.
+                        * 2. SMF sends Delete Session Response to SGW/MME.
+                        */
+                        smf_gtp2_send_delete_session_response(
+                            sess, gtp_xact);
+                        break;
+                    case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
+                        /* Create Session Request failed (eg. during Diameter or PFCP session establishment). */
+                        send_gtp_error_msg(sess, gtp_xact,
+                                OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+                        break;
+                    default:
+                        ogs_error(
+                            "Replying GTPv2C type %u not implemented!",
+                            gtp_xact->seq[0].type);
+                        break;
+                    }
                     break;
                 }
             } else {
                 uint8_t gtp_cause = gtp_cause_from_diameter(
                                     gtp_xact->gtp_version, diam_err, NULL);
-                send_gtp_delete_err_msg(sess, gtp_xact, gtp_cause);
+                send_gtp_error_msg(sess, gtp_xact, gtp_cause);
             }
         }
         OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
@@ -3000,12 +3373,14 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
     smf_ue_t *smf_ue = NULL;
     smf_sess_t *sess = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
+    ogs_pkbuf_t *n1smbuf = NULL;
 
     ogs_nas_5gs_message_t *nas_message = NULL;
 
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     int r;
 
@@ -3040,8 +3415,10 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nsmf_pdusession:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_SM_CONTEXTS)
                 SWITCH(sbi_message->h.resource.component[2])
@@ -3190,7 +3567,7 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", sbi_message->h.service.name);
             ogs_assert(true ==
                 ogs_sbi_server_send_error(stream,
@@ -3198,7 +3575,7 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
                     "Invalid API name", sbi_message->h.service.name,
                     NULL));
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
-        END
+        }
         break;
 
     case OGS_EVENT_SBI_CLIENT:
@@ -3209,9 +3586,68 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
         if (stream_id >= OGS_MIN_POOL_ID && stream_id <= OGS_MAX_POOL_ID)
             stream = ogs_sbi_stream_find_by_id(stream_id);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nsmf_pdusession:
             SWITCH(sbi_message->h.resource.component[0])
+            CASE(OGS_SBI_RESOURCE_NAME_PDU_SESSIONS)
+                SWITCH(sbi_message->h.method)
+                CASE(OGS_SBI_HTTP_METHOD_POST)
+                    SWITCH(sbi_message->h.resource.component[2])
+                    CASE(OGS_SBI_RESOURCE_NAME_MODIFY)
+                        switch (e->h.sbi.state) {
+                        case OGS_PFCP_DELETE_TRIGGER_UE_REQUESTED:
+                            /*
+                             * The H-SMF response can arrive after PFCP
+                             * deletion. The original AMF request has already
+                             * been completed; do not restore its stream ID.
+                             */
+                            break;
+                        /*
+                         * The H-SMF activation response can also be delayed
+                         * past PFCP deletion if the UE releases the session
+                         * immediately after setup. Complete that earlier AMF
+                         * request, as in wait_pfcp_deletion, without changing
+                         * the session state or restarting activation.
+                         */
+                        case SMF_UPDATE_STATE_ACTIVATED_FROM_ACTIVATING:
+                            if (stream)
+                                smf_sbi_send_sm_context_updated_data_up_cnx_state(
+                                        sess, stream,
+                                        OpenAPI_up_cnx_state_ACTIVATED);
+                            break;
+                        case SMF_UPDATE_STATE_ACTIVATED_FROM_NON_ACTIVATING:
+                            if (stream)
+                                ogs_assert(true ==
+                                    ogs_sbi_send_http_status_no_content(stream));
+                            break;
+                        case SMF_UPDATE_STATE_DEACTIVATED:
+                            /* The response may also arrive after deletion. */
+                            if (stream)
+                                smf_sbi_send_sm_context_updated_data_up_cnx_state(
+                                        sess, stream,
+                                        OpenAPI_up_cnx_state_DEACTIVATED);
+                            break;
+                        default:
+                            ogs_fatal("Unknown state [0x%x]", e->h.sbi.state);
+                            ogs_assert_if_reached();
+                        }
+                        break;
+                    DEFAULT
+                        ogs_error("[%s:%d] Invalid resource name [%s]",
+                                smf_ue->supi, sess->psi,
+                                sbi_message->h.resource.component[2]);
+                        ogs_assert_if_reached();
+                    END
+                    break;
+                DEFAULT
+                    ogs_error("[%s:%d] Invalid HTTP method [%s]",
+                            smf_ue->supi, sess->psi, sbi_message->h.method);
+                    ogs_assert_if_reached();
+                END
+                break;
+
             CASE(OGS_SBI_RESOURCE_NAME_VSMF_PDU_SESSIONS)
                 SWITCH(sbi_message->h.method)
                 CASE(OGS_SBI_HTTP_METHOD_POST)
@@ -3287,7 +3723,7 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 ogs_info("[%s:%d] state [%d] res_status [%d], stream [%p:%d]",
@@ -3306,9 +3742,7 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_SMPOLICYCONTROL)
-            ogs_pkbuf_t *n1smbuf = NULL;
-
+        case OpenAPI_service_name_npcf_smpolicycontrol:
             ogs_error("[%s:%d] state [%d] res_status [%d]",
                 smf_ue->supi, sess->psi,
                 e->h.sbi.state, sbi_message->res_status);
@@ -3322,7 +3756,7 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
                     n1smbuf, OpenAPI_n2_sm_info_type_NULL, NULL);
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
+        case OpenAPI_service_name_nudm_sdm:
             SWITCH(sbi_message->h.resource.component[1])
             CASE(OGS_SBI_RESOURCE_NAME_SDM_SUBSCRIPTIONS)
                 SWITCH(sbi_message->h.method)
@@ -3351,11 +3785,11 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("[%s:%d] Invalid API name [%s]",
                     smf_ue->supi, sess->psi, sbi_message->h.service.name);
             ogs_assert_if_reached();
-        END
+        }
         break;
 
     case SMF_EVT_NGAP_MESSAGE:
@@ -3615,6 +4049,8 @@ void smf_gsm_state_5gc_n1_n2_reject(ogs_fsm_t *s, smf_event_t *e)
     smf_ue_t *smf_ue = NULL;
     smf_sess_t *sess = NULL;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
+    int r;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -3626,19 +4062,27 @@ void smf_gsm_state_5gc_n1_n2_reject(ogs_fsm_t *s, smf_event_t *e)
 
     switch (e->h.id) {
     case OGS_FSM_ENTRY_SIG:
+        /*
+         * Tear down in order: SM Policy -> UDM SDM subscription -> Reject.
+         * UECM registration is not done yet at this point.
+         */
         if (PCF_SM_POLICY_ASSOCIATED(sess)) {
-            int r = 0;
-
             memset(&sess->nsmf_param, 0, sizeof(sess->nsmf_param));
 
             sess->nsmf_param.ue_location = true;
             sess->nsmf_param.ue_timezone = true;
 
             r = smf_sbi_discover_and_send(
-                    OGS_SBI_SERVICE_TYPE_NPCF_SMPOLICYCONTROL, NULL,
+                    OpenAPI_service_name_npcf_smpolicycontrol, NULL,
                     smf_npcf_smpolicycontrol_build_delete,
                     sess, NULL,
                     OGS_PFCP_DELETE_TRIGGER_AMF_UPDATE_SM_CONTEXT, NULL);
+            ogs_expect(r == OGS_OK);
+        } else if (UDM_SDM_SUBSCRIBED(sess)) {
+            r = smf_sbi_discover_and_send(
+                    OpenAPI_service_name_nudm_sdm, NULL,
+                    smf_nudm_sdm_build_subscription_delete,
+                    sess, NULL, 0, NULL);
             ogs_expect(r == OGS_OK);
         } else {
             smf_namf_comm_send_n1_n2_pdu_establishment_reject(sess, NULL);
@@ -3654,8 +4098,10 @@ void smf_gsm_state_5gc_n1_n2_reject(ogs_fsm_t *s, smf_event_t *e)
         smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
         ogs_assert(smf_ue);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_SMPOLICYCONTROL)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_npcf_smpolicycontrol:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_SM_POLICIES)
                 if (!sbi_message->h.resource.component[1]) {
@@ -3679,8 +4125,16 @@ void smf_gsm_state_5gc_n1_n2_reject(ogs_fsm_t *s, smf_event_t *e)
                                sessions. */
                         }
 
-                        smf_namf_comm_send_n1_n2_pdu_establishment_reject(
-                                sess, NULL);
+                        if (UDM_SDM_SUBSCRIBED(sess)) {
+                            r = smf_sbi_discover_and_send(
+                                    OpenAPI_service_name_nudm_sdm, NULL,
+                                    smf_nudm_sdm_build_subscription_delete,
+                                    sess, NULL, 0, NULL);
+                            ogs_expect(r == OGS_OK);
+                        } else {
+                            smf_namf_comm_send_n1_n2_pdu_establishment_reject(
+                                    sess, NULL);
+                        }
                         break;
                     DEFAULT
                         ogs_error("[%s:%d] Unknown resource name [%s]",
@@ -3699,7 +4153,34 @@ void smf_gsm_state_5gc_n1_n2_reject(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
+        case OpenAPI_service_name_nudm_sdm:
+            SWITCH(sbi_message->h.resource.component[1])
+            CASE(OGS_SBI_RESOURCE_NAME_SDM_SUBSCRIPTIONS)
+                UDM_SDM_CLEAR(sess);
+
+                if (sbi_message->res_status !=
+                        OGS_SBI_HTTP_STATUS_NO_CONTENT) {
+                    ogs_error("[%s:%d] HTTP response error [%d]",
+                            smf_ue->supi, sess->psi,
+                            sbi_message->res_status);
+                    /* In spite of error from UDM, continue with
+                       session teardown, so as to not leave stale
+                       sessions. */
+                }
+
+                smf_namf_comm_send_n1_n2_pdu_establishment_reject(
+                        sess, NULL);
+                break;
+
+            DEFAULT
+                ogs_error("[%s:%d] Invalid resource name [%s]",
+                        smf_ue->supi, sess->psi,
+                        sbi_message->h.resource.component[1]);
+                OGS_FSM_TRAN(s, smf_gsm_state_exception);
+            END
+            break;
+
+        case OpenAPI_service_name_namf_comm:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXTS)
                 OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
@@ -3713,11 +4194,11 @@ void smf_gsm_state_5gc_n1_n2_reject(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("[%s:%d] Invalid API name [%s]",
                     smf_ue->supi, sess->psi, sbi_message->h.service.name);
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
-        END
+        }
         break;
 
     default:
@@ -3736,6 +4217,7 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
     ogs_sbi_message_t *sbi_message = NULL;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     int r;
 
@@ -3768,8 +4250,10 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
             break;
         }
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nsmf_pdusession:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_SM_CONTEXTS)
                 SWITCH(sbi_message->h.resource.component[2])
@@ -3801,7 +4285,7 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", sbi_message->h.service.name);
             ogs_assert(true ==
                 ogs_sbi_server_send_error(stream,
@@ -3809,7 +4293,7 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
                     "Invalid API name", sbi_message->h.service.name,
                     NULL));
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
-        END
+        }
         break;
 
     case OGS_EVENT_SBI_CLIENT:
@@ -3823,8 +4307,10 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
         if (stream_id >= OGS_MIN_POOL_ID && stream_id <= OGS_MAX_POOL_ID)
             stream = ogs_sbi_stream_find_by_id(stream_id);
 
-        SWITCH(sbi_message->h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NPCF_SMPOLICYCONTROL)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                sbi_message->h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_npcf_smpolicycontrol:
             SWITCH(sbi_message->h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_SM_POLICIES)
                 if (!sbi_message->h.resource.component[1]) {
@@ -3904,7 +4390,7 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_SDM)
+        case OpenAPI_service_name_nudm_sdm:
             SWITCH(sbi_message->h.resource.component[1])
             CASE(OGS_SBI_RESOURCE_NAME_SDM_SUBSCRIPTIONS)
                 SWITCH(sbi_message->h.method)
@@ -3933,9 +4419,9 @@ void smf_gsm_state_5gc_session_will_deregister(ogs_fsm_t *s, smf_event_t *e)
             END
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", sbi_message->h.service.name);
-        END
+        }
         break;
 
     default:

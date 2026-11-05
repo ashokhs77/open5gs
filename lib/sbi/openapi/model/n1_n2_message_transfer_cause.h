@@ -1,14 +1,14 @@
 /*
  * n1_n2_message_transfer_cause.h
  *
- * 
+ * Enumeration for N1N2Message Transfer Cause
  */
 
 #ifndef _OpenAPI_n1_n2_message_transfer_cause_H_
 #define _OpenAPI_n1_n2_message_transfer_cause_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

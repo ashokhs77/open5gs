@@ -8,24 +8,24 @@
 #define _OpenAPI_mme_capabilities_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_mme_capabilities_s OpenAPI_mme_capabilities_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_mme_capabilities_s OpenAPI_mme_capabilities_t;
-typedef struct OpenAPI_mme_capabilities_s {
+struct OpenAPI_mme_capabilities_s {
     bool is_non_ip_supported;
     int non_ip_supported;
     bool is_ethernet_supported;
     int ethernet_supported;
     bool is_upip_supported;
     int upip_supported;
-} OpenAPI_mme_capabilities_t;
+};
 
 OpenAPI_mme_capabilities_t *OpenAPI_mme_capabilities_create(
     bool is_non_ip_supported,

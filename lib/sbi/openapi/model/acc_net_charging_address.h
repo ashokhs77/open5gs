@@ -8,20 +8,20 @@
 #define _OpenAPI_acc_net_charging_address_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_acc_net_charging_address_s OpenAPI_acc_net_charging_address_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_acc_net_charging_address_s OpenAPI_acc_net_charging_address_t;
-typedef struct OpenAPI_acc_net_charging_address_s {
+struct OpenAPI_acc_net_charging_address_s {
     char *an_charg_ipv4_addr;
     char *an_charg_ipv6_addr;
-} OpenAPI_acc_net_charging_address_t;
+};
 
 OpenAPI_acc_net_charging_address_t *OpenAPI_acc_net_charging_address_create(
     char *an_charg_ipv4_addr,

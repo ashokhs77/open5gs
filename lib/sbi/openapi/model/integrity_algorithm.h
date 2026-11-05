@@ -1,14 +1,14 @@
 /*
  * integrity_algorithm.h
  *
- * 
+ * Indicates the supported Integrity Algorithm
  */
 
 #ifndef _OpenAPI_integrity_algorithm_H_
 #define _OpenAPI_integrity_algorithm_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

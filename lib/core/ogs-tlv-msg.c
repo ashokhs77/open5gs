@@ -512,8 +512,8 @@ static int tlv_parse_leaf(void *msg, ogs_tlv_desc_t *desc, ogs_tlv_t *tlv)
     {
         ogs_tlv_uint16_t *v = (ogs_tlv_uint16_t *)msg;
 
-        if (tlv->length < 1 || tlv->length > 2) {
-            ogs_error("Invalid TLV length %d.", tlv->length);
+        if (tlv->length != 2) {
+            ogs_error("Invalid TLV length %d. It should be 2", tlv->length);
             return OGS_ERROR;
         }
         v->u16 = ((((uint8_t*)tlv->value)[0]<< 8)&0xff00) |
@@ -527,8 +527,8 @@ static int tlv_parse_leaf(void *msg, ogs_tlv_desc_t *desc, ogs_tlv_t *tlv)
     {
         ogs_tlv_uint24_t *v = (ogs_tlv_uint24_t *)msg;
 
-        if (tlv->length < 1 || tlv->length > 3) {
-            ogs_error("Invalid TLV length %d.", tlv->length);
+        if (tlv->length != 3) {
+            ogs_error("Invalid TLV length %d. It should be 3", tlv->length);
             return OGS_ERROR;
         }
         v->u24 = ((((uint8_t*)tlv->value)[0]<<16)&0x00ff0000) |
@@ -543,11 +543,11 @@ static int tlv_parse_leaf(void *msg, ogs_tlv_desc_t *desc, ogs_tlv_t *tlv)
     {
         ogs_tlv_uint32_t *v = (ogs_tlv_uint32_t *)msg;
 
-        if (tlv->length < 1 || tlv->length > 4) {
-            ogs_error("Invalid TLV length %d.", tlv->length);
+        if (tlv->length != 4) {
+            ogs_error("Invalid TLV length %d. It should be 4", tlv->length);
             return OGS_ERROR;
         }
-        v->u32 = ((((uint8_t*)tlv->value)[0]<<24)&0xff000000) |
+        v->u32 = (((uint32_t)((uint8_t*)tlv->value)[0]<<24)&0xff000000) |
                ((((uint8_t*)tlv->value)[1]<<16)&0x00ff0000) |
                ((((uint8_t*)tlv->value)[2]<< 8)&0x0000ff00) |
                ((((uint8_t*)tlv->value)[3]    )&0x000000ff);
@@ -793,7 +793,8 @@ static uint16_t parse_get_element_type(uint8_t *pos, uint8_t mode)
 /* Get TLV element taking into account msg_mode (to know TLV tag length) +
  * specific TLV information from "desc" (to know whether the specific IE is TLV
  * or TV, and its expected length in the later case). */
-static uint8_t *tlv_get_element_desc(ogs_tlv_t *tlv, uint8_t *blk, uint8_t msg_mode, ogs_tlv_desc_t *desc)
+static uint8_t *tlv_get_element_desc(ogs_tlv_t *tlv, uint8_t *blk,
+        uint32_t size, uint8_t msg_mode, ogs_tlv_desc_t *desc)
 {
     uint8_t instance;
     unsigned tlv_tag_pos;
@@ -803,19 +804,30 @@ static uint8_t *tlv_get_element_desc(ogs_tlv_t *tlv, uint8_t *blk, uint8_t msg_m
     uint8_t tlv_mode;
     static ogs_tlv_desc_t* tlv_desc;
 
+    if ((msg_mode == OGS_TLV_MODE_T2_L2 && size < 2) || size < 1)
+        return NULL;
+
     tlv_tag = parse_get_element_type(blk, msg_mode);
     instance = 0;  /* TODO: support instance != 0 if ever really needed by looking it up in pos */
     tlv_tag_pos = 0; /* All tags with same instance should use the same tlv_desc, so take the first one */
     tlv_desc = tlv_find_desc_by_type_inst(&desc_index, &tlv_offset, desc, tlv_tag, instance, tlv_tag_pos);
     if (!tlv_desc) {
+        /*
+         * TS 29.060 11.1.9: An unknown TLV IE (type >= 128) is skipped
+         * using its length. An unknown TV IE has no length to skip.
+         */
+        if (tlv_tag >= 128)
+            return tlv_get_element(tlv, blk, size, msg_mode);
+
         ogs_error("Can't parse find TLV description for type %u", tlv_tag);
         return NULL;
     }
     tlv_mode = tlv_ctype2mode(tlv_desc->ctype, msg_mode);
 
     if (tlv_mode == OGS_TLV_MODE_T1)
-        return tlv_get_element_fixed(tlv, blk, tlv_mode, tlv_desc->length);
-    return tlv_get_element(tlv, blk, tlv_mode);
+        return tlv_get_element_fixed(
+                tlv, blk, size, tlv_mode, tlv_desc->length);
+    return tlv_get_element(tlv, blk, size, tlv_mode);
 }
 
 /* Similar to ogs_tlv_parse_block(), but taking into account each TLV format from "desc". */
@@ -836,7 +848,8 @@ static ogs_tlv_t *ogs_tlv_parse_block_desc(uint32_t length, void *data, uint8_t 
         return NULL;
     }
 
-    pos = tlv_get_element_desc(curr, pos, msg_mode, desc);
+    pos = tlv_get_element_desc(
+            curr, pos, length - (uint32_t)(pos - blk), msg_mode, desc);
     if (!pos) {
         ogs_error("ogs_tlv_parse_block() failed[LEN:%u,MODE:%u] - parse error",
                 length, msg_mode);
@@ -859,7 +872,8 @@ static ogs_tlv_t *ogs_tlv_parse_block_desc(uint32_t length, void *data, uint8_t 
         }
         prev->next = curr;
 
-        pos = tlv_get_element_desc(curr, pos, msg_mode, desc);
+        pos = tlv_get_element_desc(
+                curr, pos, length - (uint32_t)(pos - blk), msg_mode, desc);
         if (!pos) {
             ogs_error("ogs_tlv_parse_block() failed[LEN:%d,MODE:%d]",
                     length, msg_mode);

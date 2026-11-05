@@ -9,6 +9,12 @@ This guide is based on **Alpine 3.13** Distribution.
 ### Getting MongoDB
 ---
 
+**Tip:** MongoDB is used as the database for PCF/UDR and PCRF/HSS.
+{: .notice--info}
+
+**Note:** If you use an external MongoDB server, you can skip this section.
+{: .notice--warning}
+
 Install MongoDB with package manager.
 ```bash
 $ sudo apk update
@@ -53,7 +59,7 @@ $ ip link show
 
 Install the depedencies for building the source code.
 ```bash
-$ sudo apk add alpine-sdk bison flex git cmake meson bash sudo linux-headers bsd-compat-headers yaml-dev lksctp-tools-dev gnutls-dev libgcrypt-dev libidn-dev mongo-c-driver-dev libmicrohttpd-dev curl-dev nghttp2-dev talloc-dev
+$ sudo apk add alpine-sdk bison flex git cmake meson bash sudo linux-headers bsd-compat-headers yaml-dev lksctp-tools-dev gnutls-dev libgcrypt-dev libidn-dev c-ares-dev mongo-c-driver-dev libmicrohttpd-dev curl-dev nghttp2-dev talloc-dev
 ```
 
 Git clone.

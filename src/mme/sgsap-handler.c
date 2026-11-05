@@ -152,7 +152,7 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 
         /* check BCS regardless of active_flag */
         if (mme_ue->tracking_area_update_request_presencemask &
-            OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_EPS_BEARER_CONTEXT_STATUS_TYPE) {
+            OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_EPS_BEARER_CONTEXT_STATUS_PRESENT) {
             ogs_info("[%s] LU accept + TAU accept(active_flag=%d, BCS)",
                 mme_ue->imsi_bcd,
                 mme_ue->nas_eps.update.active_flag);
@@ -317,7 +317,7 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 
         /* check BCS regardless of active_flag */
         if (mme_ue->tracking_area_update_request_presencemask &
-            OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_EPS_BEARER_CONTEXT_STATUS_TYPE) {
+            OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_EPS_BEARER_CONTEXT_STATUS_PRESENT) {
             ogs_info("[%s] LU reject + TAU accept(active_flag=%d, BCS)",
                 mme_ue->imsi_bcd,
                 mme_ue->nas_eps.update.active_flag);
@@ -337,8 +337,12 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
          * This ensures that the UE has acknowledged the new P-TMSI,
          * allowing the TAU procedure to complete successfully
          * and maintaining synchronization between the UE and the network.
+         *
+         * A pending GUTI also keeps the S1 connection, so that the UE can
+         * acknowledge it with TAU Complete.
          */
         if (!mme_ue->nas_eps.update.active_flag &&
+            !MME_NEXT_GUTI_IS_AVAILABLE(mme_ue) &&
             !MME_NEXT_P_TMSI_IS_AVAILABLE(mme_ue)) {
             enb_ue->relcause.group = S1AP_Cause_PR_nas;
             enb_ue->relcause.cause = S1AP_CauseNas_normal_release;
@@ -737,18 +741,34 @@ void sgsap_handle_downlink_unitdata(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 
     ogs_tlv_free_all(root);
 
-    ogs_assert(nas_mobile_identity_imsi);
-    ogs_assert(nas_mobile_identity_imsi_len == SGSAP_IE_IMSI_LEN);
-    ogs_assert(nas_message_container_buffer);
-    ogs_assert(nas_message_container_length);
+    /* Received IEs are peer input, not internal invariants. Validate
+     * the size before reading the identity type or converting digits. */
+    if (!nas_mobile_identity_imsi) {
+        ogs_error("Missing SGsAP IMSI");
+        return;
+    }
+    if (nas_mobile_identity_imsi_len != SGSAP_IE_IMSI_LEN) {
+        ogs_error("Invalid SGsAP IMSI length [%d], expected [%d]",
+                nas_mobile_identity_imsi_len, SGSAP_IE_IMSI_LEN);
+        return;
+    }
+    if (nas_mobile_identity_imsi->type != OGS_NAS_MOBILE_IDENTITY_IMSI) {
+        ogs_error("Invalid SGsAP identity type [%d], expected [%d]",
+                nas_mobile_identity_imsi->type, OGS_NAS_MOBILE_IDENTITY_IMSI);
+        return;
+    }
+    if (!nas_message_container_buffer) {
+        ogs_error("Missing SGsAP NAS message container");
+        return;
+    }
+    if (!nas_message_container_length) {
+        ogs_error("Empty SGsAP NAS message container");
+        return;
+    }
 
-    if (nas_mobile_identity_imsi->type == OGS_NAS_MOBILE_IDENTITY_IMSI) {
-
-        ogs_nas_eps_imsi_to_bcd(nas_mobile_identity_imsi,
-                nas_mobile_identity_imsi_len, imsi_bcd);
-        mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
-    } else
-        ogs_assert_if_reached();
+    ogs_nas_eps_imsi_to_bcd(nas_mobile_identity_imsi,
+            nas_mobile_identity_imsi_len, imsi_bcd);
+    mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
 
     if (!mme_ue) {
         ogs_error("No UE(mme-ue) context");

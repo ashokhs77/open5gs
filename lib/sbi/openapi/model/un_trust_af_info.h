@@ -8,29 +8,32 @@
 #define _OpenAPI_un_trust_af_info_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_un_trust_af_info_s OpenAPI_un_trust_af_info_t;
 #include "snssai_info_item.h"
+#include "vfl_info.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_un_trust_af_info_s OpenAPI_un_trust_af_info_t;
-typedef struct OpenAPI_un_trust_af_info_s {
+struct OpenAPI_un_trust_af_info_s {
     char *af_id;
     OpenAPI_list_t *s_nssai_info_list;
     bool is_mapping_ind;
     int mapping_ind;
-} OpenAPI_un_trust_af_info_t;
+    OpenAPI_list_t *vfl_info;
+};
 
 OpenAPI_un_trust_af_info_t *OpenAPI_un_trust_af_info_create(
     char *af_id,
     OpenAPI_list_t *s_nssai_info_list,
     bool is_mapping_ind,
-    int mapping_ind
+    int mapping_ind,
+    OpenAPI_list_t *vfl_info
 );
 void OpenAPI_un_trust_af_info_free(OpenAPI_un_trust_af_info_t *un_trust_af_info);
 OpenAPI_un_trust_af_info_t *OpenAPI_un_trust_af_info_parseFromJSON(cJSON *un_trust_af_infoJSON);

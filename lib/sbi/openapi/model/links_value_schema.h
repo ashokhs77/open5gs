@@ -8,20 +8,20 @@
 #define _OpenAPI_links_value_schema_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_links_value_schema_s OpenAPI_links_value_schema_t;
 #include "link.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_links_value_schema_s OpenAPI_links_value_schema_t;
-typedef struct OpenAPI_links_value_schema_s {
+struct OpenAPI_links_value_schema_s {
     char *href;
-} OpenAPI_links_value_schema_t;
+};
 
 OpenAPI_links_value_schema_t *OpenAPI_links_value_schema_create(
     char *href

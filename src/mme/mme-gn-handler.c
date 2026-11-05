@@ -49,22 +49,30 @@ void mme_gn_handle_echo_response(
     /* Not Implemented */
 }
 
-static int decode_global_enb_id(S1AP_Global_ENB_ID_t *glob_enb_id, const uint8_t *buf, size_t buf_len)
+static int decode_global_enb_id(
+        S1AP_Global_ENB_ID_t **glob_enb_id,
+        const uint8_t *buf, size_t buf_len)
 {
     asn_dec_rval_t dec_ret = {0};
 
-    memset(glob_enb_id, 0, sizeof(S1AP_Global_ENB_ID_t));
-    dec_ret = aper_decode(NULL, &asn_DEF_S1AP_Global_ENB_ID, (void **)&glob_enb_id,
-            buf, buf_len, 0, 0);
+    ogs_assert(glob_enb_id);
+
+    *glob_enb_id = NULL;
+    dec_ret = aper_decode(NULL, &asn_DEF_S1AP_Global_ENB_ID,
+            (void **)glob_enb_id, buf, buf_len, 0, 0);
 
     if (dec_ret.code != RC_OK) {
         ogs_warn("Failed to decode ASN-PDU [code:%d,consumed:%d]",
                 dec_ret.code, (int)dec_ret.consumed);
+        if (*glob_enb_id) {
+            ASN_STRUCT_FREE(asn_DEF_S1AP_Global_ENB_ID, *glob_enb_id);
+            *glob_enb_id = NULL;
+        }
         return OGS_ERROR;
     }
 
     if (ogs_log_get_domain_level(OGS_LOG_DOMAIN) >= OGS_LOG_TRACE)
-        asn_fprint(stdout, &asn_DEF_S1AP_Global_ENB_ID, glob_enb_id);
+        asn_fprint(stdout, &asn_DEF_S1AP_Global_ENB_ID, *glob_enb_id);
 
     return OGS_OK;
 }
@@ -98,6 +106,7 @@ void mme_gn_handle_sgsn_context_request(
     ogs_nas_eps_guti_t nas_guti;
     ogs_plmn_id_t plmn_id;
     ogs_nas_rai_t rai;
+    ogs_ip_t sgsn_gn_ip, sgsn_gn_ip_alt;
     mme_ue_t *mme_ue = NULL;
     int rv;
 
@@ -125,6 +134,30 @@ void mme_gn_handle_sgsn_context_request(
         mme_gtp1_send_sgsn_context_response(NULL, OGS_GTP1_CAUSE_MANDATORY_IE_MISSING, xact);
         return;
     }
+
+    rv = ogs_gtp1_gsn_addr_to_ip(
+            req->sgsn_address_for_control_plane.data,
+            req->sgsn_address_for_control_plane.len, &sgsn_gn_ip);
+    if (rv != OGS_OK) {
+        ogs_warn("[Gn] Rx SGSN Context Request with invalid SGSN Address for Control Plane!");
+        mme_gtp1_send_sgsn_context_response(
+                NULL, OGS_GTP1_CAUSE_MANDATORY_IE_INCORRECT, xact);
+        return;
+    }
+
+    if (req->alternative_sgsn_address_for_control_plane.presence) {
+        rv = ogs_gtp1_gsn_addr_to_ip(
+                req->alternative_sgsn_address_for_control_plane.data,
+                req->alternative_sgsn_address_for_control_plane.len,
+                &sgsn_gn_ip_alt);
+        if (rv != OGS_OK) {
+            ogs_warn("[Gn] Rx SGSN Context Request with invalid Alternative SGSN Address for Control Plane!");
+            mme_gtp1_send_sgsn_context_response(
+                    NULL, OGS_GTP1_CAUSE_OPTIONAL_IE_INCORRECT, xact);
+            return;
+        }
+    }
+
     if (!req->imsi.presence &&
         !req->temporary_logical_link_identifier.presence &&
         !req->packet_tmsi.presence) {
@@ -150,7 +183,14 @@ void mme_gn_handle_sgsn_context_request(
 
     if (req->imsi.presence) {
         char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
-        ogs_buffer_to_bcd(req->imsi.data, req->imsi.len, imsi_bcd);
+        if (!ogs_buffer_to_bcd(req->imsi.data, req->imsi.len,
+                    imsi_bcd, sizeof(imsi_bcd))) {
+            ogs_warn("[Gn] Rx SGSN Context Request with invalid IMSI "
+                    "[len:%d]!", req->imsi.len);
+            mme_gtp1_send_sgsn_context_response(
+                    NULL, OGS_GTP1_CAUSE_MANDATORY_IE_INCORRECT, xact);
+            return;
+        }
         ogs_debug("    IMSI[%s]", imsi_bcd);
         mme_ue = mme_ue_find_by_imsi(req->imsi.data, req->imsi.len);
         if (!mme_ue)
@@ -196,18 +236,9 @@ void mme_gn_handle_sgsn_context_request(
     }
 
     mme_ue->gn.sgsn_gn_teid = req->tunnel_endpoint_identifier_control_plane.u32;
-
-    rv = ogs_gtp1_gsn_addr_to_ip(req->sgsn_address_for_control_plane.data,
-                                 req->sgsn_address_for_control_plane.len,
-                                 &mme_ue->gn.sgsn_gn_ip);
-    ogs_assert(rv == OGS_OK);
-
-   if (req->alternative_sgsn_address_for_control_plane.presence) {
-        rv = ogs_gtp1_gsn_addr_to_ip(req->alternative_sgsn_address_for_control_plane.data,
-                                     req->alternative_sgsn_address_for_control_plane.len,
-                                    &mme_ue->gn.sgsn_gn_ip_alt);
-        ogs_assert(rv == OGS_OK);
-   }
+    mme_ue->gn.sgsn_gn_ip = sgsn_gn_ip;
+    if (req->alternative_sgsn_address_for_control_plane.presence)
+        mme_ue->gn.sgsn_gn_ip_alt = sgsn_gn_ip_alt;
 
     /* 3GPP TS 23.401 Annex D.3.5 "Routing Area Update":
      * Step 2. "If the old P-TMSI Signature was valid or if the new SGSN indicates that it has authenticated the MS,
@@ -256,7 +287,9 @@ static mme_sess_t *mme_ue_session_from_gtp1_pdp_ctx(mme_ue_t *mme_ue, const ogs_
         ogs_assert(sess);
     }
 
-    sess->session = ogs_sess;
+    mme_sess_set_session(sess, ogs_sess);
+    if (!sess->session->session_type)
+        sess->session->session_type = gtp1_pdp_ctx->pdp_type_num[0];
     sess->pgw_s5c_teid = gtp1_pdp_ctx->ul_teic;
     sess->pgw_s5c_ip = gtp1_pdp_ctx->ggsn_address_c;
     ogs_ip_to_paa(&gtp1_pdp_ctx->pdp_address[0], &sess->paa);
@@ -355,9 +388,16 @@ int mme_gn_handle_sgsn_context_response(
         goto nack_and_reject;
     }
 
-    ogs_buffer_to_bcd(resp->imsi.data, resp->imsi.len, imsi_bcd);
+    if (!ogs_buffer_to_bcd(resp->imsi.data, resp->imsi.len,
+                imsi_bcd, sizeof(imsi_bcd))) {
+        ogs_error("[Gn] Rx SGSN Context Response with invalid IMSI [len:%d]!",
+                resp->imsi.len);
+        gtp1_cause = OGS_GTP1_CAUSE_MANDATORY_IE_INCORRECT;
+        goto nack_and_reject;
+    }
     ogs_info("    IMSI[%s]", imsi_bcd);
-    mme_ue_set_imsi(mme_ue, imsi_bcd);
+    mme_ue_set_imsi(mme_ue, imsi_bcd,
+            MME_UE_IMSI_FROM_SGSN_CONTEXT_RESPONSE);
 
     if (!resp->tunnel_endpoint_identifier_control_plane.presence) {
         ogs_error("[Gn] Rx SGSN Context Response with no Tunnel Endpoint Identifier Control Plane!");
@@ -407,6 +447,8 @@ int mme_gn_handle_sgsn_context_response(
              ogs_min(gtp1_mm_ctx.ms_network_capability_len, sizeof(mme_ue->ms_network_capability) - 1));
     /* TODO: how to fill first byte of mme_ue->ms_network_capability ? */
 
+    /* The KASME derived from the SGSN context is a mapped EPS context. */
+    mme_ue->nas_eps.mme.tsc = 1;
     mme_ue->nas_eps.mme.ksi = gtp1_mm_ctx.ksi;
     /* 3GPP TS 33.401 A.10, A.11: */
     mme_ue->noncemme = ogs_random32();
@@ -499,7 +541,7 @@ void mme_gn_handle_ran_information_relay(
 {
     uint8_t discr;
     ogs_eps_tai_t *target_tai;
-    S1AP_Global_ENB_ID_t global_ENB_ID;
+    S1AP_Global_ENB_ID_t *global_ENB_ID = NULL;
     uint32_t target_enb_id;
     mme_enb_t *target_enb = NULL;
     int rv;
@@ -545,25 +587,35 @@ void mme_gn_handle_ran_information_relay(
     rv = decode_global_enb_id(&global_ENB_ID,
             ((uint8_t *)req->rim_routing_address.data) + sizeof(ogs_eps_tai_t),
             req->rim_routing_address.len - sizeof(ogs_eps_tai_t));
-    if (rv != OGS_OK)
-        return;
-    ogs_s1ap_ENB_ID_to_uint32(&global_ENB_ID.eNB_ID, &target_enb_id);
+    if (rv != OGS_OK || !global_ENB_ID)
+        goto cleanup;
+
+    if (!global_ENB_ID->eNB_ID) {
+        ogs_warn("[Gn] Rx RAN Information Relay: Global-ENB-ID has no eNB-ID");
+        goto cleanup;
+    }
+
+    ogs_s1ap_ENB_ID_to_uint32(global_ENB_ID->eNB_ID, &target_enb_id);
 
     ogs_debug("    Target : ENB_ID[%s:%d], TAC[%d]",
-              global_ENB_ID.eNB_ID.present ==
+              global_ENB_ID->eNB_ID->present ==
                   S1AP_ENB_ID_PR_homeENB_ID ? "Home" :
-              global_ENB_ID.eNB_ID.present ==
+              global_ENB_ID->eNB_ID->present ==
                   S1AP_ENB_ID_PR_macroENB_ID ? "Macro" : "Others",
               target_enb_id, target_tai->tac);
 
     target_enb = mme_enb_find_by_enb_id(target_enb_id);
     if (target_enb == NULL) {
         ogs_warn("[Gn] Rx RAN Information Relay: cannot find target eNB-id[0x%x]", target_enb_id);
-        return;
+        goto cleanup;
     }
 
     s1ap_send_mme_direct_information_transfer(
         target_enb,
         req->ran_transparent_container.data,
         req->ran_transparent_container.len);
+
+cleanup:
+    if (global_ENB_ID)
+        ASN_STRUCT_FREE(asn_DEF_S1AP_Global_ENB_ID, global_ENB_ID);
 }

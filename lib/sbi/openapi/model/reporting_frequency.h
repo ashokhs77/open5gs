@@ -1,14 +1,14 @@
 /*
  * reporting_frequency.h
  *
- * 
+ * Indicates the frequency for the reporting.
  */
 
 #ifndef _OpenAPI_reporting_frequency_H_
 #define _OpenAPI_reporting_frequency_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-typedef enum { OpenAPI_reporting_frequency_NULL = 0, OpenAPI_reporting_frequency_EVENT_TRIGGERED, OpenAPI_reporting_frequency_PERIODIC, OpenAPI_reporting_frequency_SESSION_RELEASE } OpenAPI_reporting_frequency_e;
+typedef enum { OpenAPI_reporting_frequency_NULL = 0, OpenAPI_reporting_frequency_EVENT_TRIGGERED, OpenAPI_reporting_frequency_PERIODIC } OpenAPI_reporting_frequency_e;
 
 char* OpenAPI_reporting_frequency_ToString(OpenAPI_reporting_frequency_e reporting_frequency);
 

@@ -8,22 +8,22 @@
 #define _OpenAPI_pcf_for_ue_binding_patch_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_pcf_for_ue_binding_patch_s OpenAPI_pcf_for_ue_binding_patch_t;
 #include "ip_end_point.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_pcf_for_ue_binding_patch_s OpenAPI_pcf_for_ue_binding_patch_t;
-typedef struct OpenAPI_pcf_for_ue_binding_patch_s {
+struct OpenAPI_pcf_for_ue_binding_patch_s {
     char *pcf_for_ue_fqdn;
     OpenAPI_list_t *pcf_for_ue_ip_end_points;
     char *pcf_id;
-} OpenAPI_pcf_for_ue_binding_patch_t;
+};
 
 OpenAPI_pcf_for_ue_binding_patch_t *OpenAPI_pcf_for_ue_binding_patch_create(
     char *pcf_for_ue_fqdn,

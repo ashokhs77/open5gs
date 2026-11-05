@@ -1,14 +1,14 @@
 /*
  * additional_qos_flow_info.h
  *
- * 
+ * The enumeration AdditionalQosFlowInfo provides additional QoS flow information (see clause  9.3.1.12 3GPP TS 38.413 [11]). It shall comply with the provisions defined in table 5.5.3.12-1. 
  */
 
 #ifndef _OpenAPI_additional_qos_flow_info_H_
 #define _OpenAPI_additional_qos_flow_info_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

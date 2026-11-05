@@ -8,20 +8,20 @@
 #define _OpenAPI_odb_data_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_odb_data_s OpenAPI_odb_data_t;
 #include "roaming_odb.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_odb_data_s OpenAPI_odb_data_t;
-typedef struct OpenAPI_odb_data_s {
+struct OpenAPI_odb_data_s {
     OpenAPI_roaming_odb_e roaming_odb;
-} OpenAPI_odb_data_t;
+};
 
 OpenAPI_odb_data_t *OpenAPI_odb_data_create(
     OpenAPI_roaming_odb_e roaming_odb

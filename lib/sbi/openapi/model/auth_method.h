@@ -1,14 +1,14 @@
 /*
  * auth_method.h
  *
- * 
+ * Contains the Authentication Method.
  */
 
 #ifndef _OpenAPI_auth_method_H_
 #define _OpenAPI_auth_method_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

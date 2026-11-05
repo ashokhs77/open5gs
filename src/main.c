@@ -34,7 +34,7 @@
 
 #include "License_Checker.h"
 
-#define TOC_BUFFER_SIZE              30 
+#define TOC_BUFFER_SIZE              30
 #define APP_NAME_BUFFER_SIZE         10
 
 INT8 gsi8Appname[APP_NAME_BUFFER_SIZE] ="CORE";
@@ -69,7 +69,7 @@ static int check_signal(int signum)
     switch (signum) {
     case SIGTERM:
     case SIGINT:
-        ogs_info("%s received", 
+        ogs_info("%s received",
                 signum == SIGTERM ? "SIGTERM" : "SIGINT");
 
         return 1;
@@ -96,7 +96,7 @@ static int check_signal(int signum)
         ogs_error("Signal-NUM[%d] received (%s)",
                 signum, ogs_signal_description_get(signum));
         break;
-            
+
     }
     return 0;
 }
@@ -133,7 +133,7 @@ static void *license_monitor_thread(void *arg)
 
     return NULL;
 }
-#endif 
+#endif
 
 int main(int argc, const char *const argv[])
 {
@@ -144,7 +144,7 @@ int main(int argc, const char *const argv[])
      */
 setbuf(stdout, NULL);
 setbuf(stderr, NULL);
-    
+
 #ifdef ENABLE_LICENSE_CHECK
     INT32 status = LICENSE_VOID;
     status = checkLicense(gsi8Appname,gsi8TOC);
@@ -155,7 +155,7 @@ setbuf(stderr, NULL);
         printf("License Expired...!, Closing the app\n");
         exit(1);
     }
-    
+
     pthread_t tid;
 
     if (pthread_create(&tid, NULL,
@@ -165,9 +165,9 @@ setbuf(stderr, NULL);
         printf("Failed to start license monitoring thread\n");
         exit(EXIT_FAILURE);
     }
-    
+
 #endif
-    
+
     int rv, i, opt;
     ogs_getopt_t options;
     struct {

@@ -83,6 +83,12 @@ $ sudo dnf config-manager --set-enabled elrepo-testing
 ### Install MongoDB using the package manager:
 ---
 
+**Tip:** MongoDB is used as the database for PCF/UDR and PCRF/HSS.
+{: .notice--info}
+
+**Note:** If you use an external MongoDB server, you can skip this section.
+{: .notice--warning}
+
 Create a repository file to install the MongoDB packages:
 
 ```bash
@@ -109,7 +115,7 @@ a base CentOS Stream 8 installation.
 
 
 ```bash
-$ sudo dnf install python3 meson cmake ninja-build gcc gcc-c++ flex bison git cmake lksctp-tools-devel libidn-devel gnutls-devel libgcrypt-devel openssl-devel cyrus-sasl-devel libyaml-devel mongo-c-driver-devel libmicrohttpd-devel libcurl-devel libnghttp2-devel libtalloc-devel
+$ sudo dnf install python3 meson cmake ninja-build gcc gcc-c++ flex bison git cmake lksctp-tools-devel libidn-devel c-ares-devel gnutls-devel libgcrypt-devel openssl-devel cyrus-sasl-devel libyaml-devel mongo-c-driver-devel libmicrohttpd-devel libcurl-devel libnghttp2-devel libtalloc-devel
 ```
 
 ### Install iproute IP interface tools.

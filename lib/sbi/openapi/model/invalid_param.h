@@ -8,20 +8,20 @@
 #define _OpenAPI_invalid_param_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_invalid_param_s OpenAPI_invalid_param_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_invalid_param_s OpenAPI_invalid_param_t;
-typedef struct OpenAPI_invalid_param_s {
+struct OpenAPI_invalid_param_s {
     char *param;
     char *reason;
-} OpenAPI_invalid_param_t;
+};
 
 OpenAPI_invalid_param_t *OpenAPI_invalid_param_create(
     char *param,

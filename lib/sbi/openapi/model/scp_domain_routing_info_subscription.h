@@ -8,23 +8,23 @@
 #define _OpenAPI_scp_domain_routing_info_subscription_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_scp_domain_routing_info_subscription_s OpenAPI_scp_domain_routing_info_subscription_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_scp_domain_routing_info_subscription_s OpenAPI_scp_domain_routing_info_subscription_t;
-typedef struct OpenAPI_scp_domain_routing_info_subscription_s {
+struct OpenAPI_scp_domain_routing_info_subscription_s {
     char *callback_uri;
     char *validity_time;
     char *req_instance_id;
     bool is_local_ind;
     int local_ind;
-} OpenAPI_scp_domain_routing_info_subscription_t;
+};
 
 OpenAPI_scp_domain_routing_info_subscription_t *OpenAPI_scp_domain_routing_info_subscription_create(
     char *callback_uri,

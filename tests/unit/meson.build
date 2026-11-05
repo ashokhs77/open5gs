@@ -23,17 +23,46 @@ testunit_unit_sources = files('''
     gtp-message-test.c
     ngap-message-test.c
     sbi-message-test.c
+    sbi-server-test.c
     security-test.c
+    nrf-discovery-test.c
+    nrf-timer-test.c
+    nnrf-subscription-test.c
     crash-test.c
+    mme-dns-select-test.c
+    mme-s13-test.c
+    mme-apn-test.c
+    mme-attach-test.c
+    mme-enb-id-test.c
+    amf-eir-test.c
+    amf-registration-test.c
+    amf-namf-test.c
+    amf-gnb-id-test.c
+    eir-config-test.c
+    ipfw-test.c
+    pfcp-rule-test.c
 '''.split())
 
 testunit_unit_exe = executable('unit',
     sources : testunit_unit_sources,
     c_args : [testunit_core_cc_flags, sbi_cc_flags],
+    include_directories : srcinc,
     dependencies : [libs1ap_dep,
                     libgtp_dep,
                     libngap_dep,
                     libnas_eps_dep,
-                    libsbi_dep])
+                    libsbi_dep,
+                    libipfw_dep,
+                    libpfcp_dep,
+                    libnrf_dep,
+                    libmme_dep,
+                    libamf_dep])
 
 test('unit', testunit_unit_exe, is_parallel : false, suite: 'unit')
+
+# Exercise policy decisions and the real AMF/MME FSMs without peer processes.
+test('eir-fsm', testunit_unit_exe,
+    args : ['mme-s13-test', 'mme-attach-test',
+            'amf-eir-test', 'amf-registration-test', 'eir-config-test'],
+    is_parallel : false,
+    suite : 'eir')

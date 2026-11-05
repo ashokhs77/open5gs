@@ -26,6 +26,7 @@
 #include "s1ap-path.h"
 #include "mme-s11-build.h"
 #include "mme-sm.h"
+#include "mme-dns.h"
 
 static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 {
@@ -139,13 +140,13 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
             return;
         }
         mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
-        if (!mme_ue) // No UE context found for the given session's MME_UE ID.it may have already been removed 
+        if (!mme_ue) // No UE context found for the given session's MME_UE ID.it may have already been removed
         {
             ogs_error("Session id[%d] and MME ue [%d] has been removed [%d]",
                     sess->mme_ue_id, mme_ue_id, type);
             return;
         }
-        
+
         break;
     case OGS_GTP2_BEARER_RESOURCE_COMMAND_TYPE:
         bearer_id = OGS_POINTER_TO_UINT(data);
@@ -171,8 +172,17 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
     ogs_assert(mme_ue);
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
 
+    if (type == OGS_GTP2_CREATE_SESSION_REQUEST_TYPE &&
+        mme_dns_retry_on_gtp_timeout(sess))
+        return;
+
     switch (type) {
     case OGS_GTP2_DELETE_SESSION_REQUEST_TYPE:
+        if (xact->delete_action ==
+                OGS_GTP_DELETE_SEND_UPDATE_LOCATION_REQUEST) {
+            /* Do not resume this Attach on a later deletion response. */
+            mme_ue->attach_session_delete_pending = false;
+        }
         /*
          * If SESSION_CONTEXT_WILL_DELETED(MME_UE) is not cleared,
          * The MME cannot send Delete-Session-Request to the SGW-C.
@@ -267,7 +277,26 @@ void mme_gtp_close(void)
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list6);
 }
 
+/*
+ * NOTE: OGS_OK does not guarantee that the CSR has been sent.
+ * With DNS-based selection enabled the request may be deferred until
+ * MME_EVENT_DNS_RESOLVED; callers asserting on OGS_OK (e.g. inside
+ * ogs_assert(OGS_OK == ...)) rely on this and MUST NOT expect a GTP
+ * transaction to exist on return.
+ */
 int mme_gtp_send_create_session_request(
+        enb_ue_t *enb_ue, mme_sess_t *sess, int create_action)
+{
+    if (mme_dns_enabled()) {
+        int rc = mme_dns_prepare(enb_ue, sess, create_action);
+        if (rc == MME_DNS_DEFERRED)
+            return OGS_OK;  /* CSR is sent on MME_EVENT_DNS_RESOLVED */
+    }
+    return mme_gtp_send_create_session_request_now(
+            enb_ue, sess, create_action);
+}
+
+int mme_gtp_send_create_session_request_now(
         enb_ue_t *enb_ue, mme_sess_t *sess, int create_action)
 {
     int rv;

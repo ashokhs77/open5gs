@@ -133,7 +133,7 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
     sess = mme_sess_first(mme_ue);
     ogs_assert(sess);
     if (mme_sess_next(sess)) { //debugging purpose added imsi number and sess id
-        ogs_error("[%s] There should only be one SESSION sess[%p], sess_id[%d]", mme_ue->imsi_bcd, 
+        ogs_error("[%s] There should only be one SESSION sess[%p], sess_id[%d]", mme_ue->imsi_bcd,
               sess, sess->mme_ue_id);
         return OGS_ERROR;
     }
@@ -270,7 +270,7 @@ int nas_eps_send_identity_request(mme_ue_t *mme_ue)
         ogs_pkbuf_free(emmbuf);
         return OGS_ERROR;
     }
-    ogs_timer_start(mme_ue->t3470.timer, 
+    ogs_timer_start(mme_ue->t3470.timer,
             mme_timer_cfg(MME_TIMER_T3470)->duration);
 
     rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
@@ -314,7 +314,7 @@ int nas_eps_send_authentication_request(mme_ue_t *mme_ue)
         ogs_pkbuf_free(emmbuf);
         return OGS_ERROR;
     }
-    ogs_timer_start(mme_ue->t3460.timer, 
+    ogs_timer_start(mme_ue->t3460.timer,
             mme_timer_cfg(MME_TIMER_T3460)->duration);
 
     rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
@@ -358,7 +358,7 @@ int nas_eps_send_security_mode_command(mme_ue_t *mme_ue)
         ogs_pkbuf_free(emmbuf);
         return OGS_ERROR;
     }
-    ogs_timer_start(mme_ue->t3460.timer, 
+    ogs_timer_start(mme_ue->t3460.timer,
             mme_timer_cfg(MME_TIMER_T3460)->duration);
 
     rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
@@ -439,8 +439,8 @@ int nas_eps_send_detach_request(mme_ue_t *mme_ue)
         ogs_pkbuf_free(emmbuf);
         return OGS_ERROR;
     }
-    ogs_timer_start(mme_ue->t3422.timer, 
-            mme_timer_cfg(MME_TIMER_T3422)->duration);    
+    ogs_timer_start(mme_ue->t3422.timer,
+            mme_timer_cfg(MME_TIMER_T3422)->duration);
 
     rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
     ogs_expect(rv == OGS_OK);
@@ -578,7 +578,7 @@ int nas_eps_send_esm_information_request(mme_bearer_t *bearer)
         ogs_pkbuf_free(esmbuf);
         return OGS_ERROR;
     }
-    ogs_timer_start(bearer->t3489.timer, 
+    ogs_timer_start(bearer->t3489.timer,
             mme_timer_cfg(MME_TIMER_T3489)->duration);
 
     rv = nas_eps_send_to_downlink_nas_transport(enb_ue, esmbuf);
@@ -736,7 +736,8 @@ int nas_eps_send_modify_bearer_context_request(
     return rv;
 }
 
-int nas_eps_send_deactivate_bearer_context_request(mme_bearer_t *bearer)
+int nas_eps_send_deactivate_bearer_context_request(
+        mme_bearer_t *bearer, ogs_nas_esm_cause_t esm_cause)
 {
     int rv;
     ogs_pkbuf_t *s1apbuf = NULL;
@@ -759,7 +760,7 @@ int nas_eps_send_deactivate_bearer_context_request(mme_bearer_t *bearer)
     }
 
     esmbuf = esm_build_deactivate_bearer_context_request(
-            bearer, OGS_NAS_ESM_CAUSE_REGULAR_DEACTIVATION);
+            bearer, esm_cause);
     if (!esmbuf) {
         ogs_error("esm_build_deactivate_bearer_context_request() failed");
         return OGS_ERROR;

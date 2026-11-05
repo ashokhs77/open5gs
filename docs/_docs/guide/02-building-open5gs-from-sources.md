@@ -13,6 +13,12 @@ This post explains how to compile and install the source code on **Debian/Ubuntu
 ### Getting MongoDB
 ---
 
+**Tip:** MongoDB is used as the database for PCF/UDR and PCRF/HSS.
+{: .notice--info}
+
+**Note:** If you use an external MongoDB server, you can skip this section.
+{: .notice--warning}
+
 Import the public key used by the package management system.
 
 ```bash
@@ -36,9 +42,6 @@ $ sudo systemctl start mongod (if '/usr/bin/mongod' is not running)
 $ sudo systemctl enable mongod (ensure to automatically start it on system boot)
 ```
 
-**Tip:** MongoDB is used as database for NRF/PCF/UDR and PCRF/HSS.
-{: .notice--info}
-
 ### Setting up TUN device (not persistent after rebooting)
 ---
 
@@ -61,7 +64,7 @@ $ sudo ip link set ogstun up
 Install the common dependencies for building the source code.
 
 ```bash
-$ sudo apt install python3-pip python3-setuptools python3-wheel ninja-build build-essential flex bison git cmake libsctp-dev libgnutls28-dev libgcrypt-dev libssl-dev libmongoc-dev libbson-dev libyaml-dev libnghttp2-dev libmicrohttpd-dev libcurl4-gnutls-dev libnghttp2-dev libtins-dev libtalloc-dev meson
+$ sudo apt install python3-pip python3-setuptools python3-wheel ninja-build build-essential flex bison git cmake libsctp-dev libc-ares-dev libgnutls28-dev libgcrypt-dev libssl-dev libmongoc-dev libbson-dev libyaml-dev libnghttp2-dev libmicrohttpd-dev libcurl4-gnutls-dev libnghttp2-dev libtins-dev libtalloc-dev meson
 ```
 
 Install libidn-dev or libidn11-dev depending on your system

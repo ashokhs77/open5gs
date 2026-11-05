@@ -48,6 +48,7 @@ void ausf_state_operational(ogs_fsm_t *s, ausf_event_t *e)
     ogs_sbi_message_t message;
     ogs_sbi_xact_t *sbi_xact = NULL;
     ogs_pool_id_t sbi_xact_id = OGS_INVALID_POOL_ID;
+    int service_name_id = OpenAPI_service_name_NULL;
 
     ausf_ue_t *ausf_ue = NULL;
     ogs_pool_id_t ausf_ue_id = OGS_INVALID_POOL_ID;
@@ -98,8 +99,10 @@ void ausf_state_operational(ogs_fsm_t *s, ausf_event_t *e)
             break;
         }
 
-        SWITCH(message.h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NNRF_NFM)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                message.h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nnrf_nfm:
 
             SWITCH(message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_NF_STATUS_NOTIFY)
@@ -131,7 +134,7 @@ void ausf_state_operational(ogs_fsm_t *s, ausf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NAUSF_AUTH)
+        case OpenAPI_service_name_nausf_auth:
             SWITCH(message.h.method)
             CASE(OGS_SBI_HTTP_METHOD_POST)
                 if (message.AuthenticationInfo &&
@@ -175,14 +178,14 @@ void ausf_state_operational(ogs_fsm_t *s, ausf_event_t *e)
             }
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", message.h.service.name);
             ogs_assert(true ==
                 ogs_sbi_server_send_error(stream,
                     OGS_SBI_HTTP_STATUS_BAD_REQUEST, &message,
                     "Invalid API name", message.h.resource.component[0],
                     NULL));
-        END
+        }
 
         /* In lib/sbi/server.c, notify_completed() releases 'request' buffer. */
         ogs_sbi_message_free(&message);
@@ -208,8 +211,10 @@ void ausf_state_operational(ogs_fsm_t *s, ausf_event_t *e)
             break;
         }
 
-        SWITCH(message.h.service.name)
-        CASE(OGS_SBI_SERVICE_NAME_NNRF_NFM)
+        service_name_id = ogs_sbi_service_name_id_from_string(
+                message.h.service.name);
+        switch (service_name_id) {
+        case OpenAPI_service_name_nnrf_nfm:
 
             SWITCH(message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_NF_INSTANCES)
@@ -220,15 +225,15 @@ void ausf_state_operational(ogs_fsm_t *s, ausf_event_t *e)
      * Guard against dispatching to an FSM that may have been finalized
      * by an asynchronous shutdown triggered by SIGTERM.
      *
-     * In init.c’s event_termination(), which can be invoked asynchronously
+     * In init.câ€™s event_termination(), which can be invoked asynchronously
      * when the process receives SIGTERM, we iterate over all NF instances:
      *     ogs_list_for_each(&ogs_sbi_self()->nf_instance_list, nf_instance)
      *         ogs_sbi_nf_fsm_fini(nf_instance);
-     * and call ogs_fsm_fini() on each instance’s FSM. That finalizes the FSM
+     * and call ogs_fsm_fini() on each instanceâ€™s FSM. That finalizes the FSM
      * and its state is reset to zero.
      *
-     * After event_termination(), any incoming SBI response—such as an NRF
-     * client callback arriving after deregistration—would otherwise be
+     * After event_termination(), any incoming SBI responseâ€”such as an NRF
+     * client callback arriving after deregistrationâ€”would otherwise be
      * dispatched into a dead FSM and trigger an assertion failure.
      *
      * To avoid this, we check OGS_FSM_STATE(&nf_instance->sm):
@@ -240,58 +245,13 @@ void ausf_state_operational(ogs_fsm_t *s, ausf_event_t *e)
                     e->h.sbi.message = &message;
                     ogs_fsm_dispatch(&nf_instance->sm, e);
                 } else
-                    ogs_error("NF instance FSM has been finalized");
+                    ogs_warn("NF instance FSM has been finalized");
 
                 break;
 
             CASE(OGS_SBI_RESOURCE_NAME_SUBSCRIPTIONS)
-                subscription_data = e->h.sbi.data;
-                ogs_assert(subscription_data);
-
-                SWITCH(message.h.method)
-                CASE(OGS_SBI_HTTP_METHOD_POST)
-                    if (message.res_status == OGS_SBI_HTTP_STATUS_CREATED ||
-                        message.res_status == OGS_SBI_HTTP_STATUS_OK) {
-                        ogs_nnrf_nfm_handle_nf_status_subscribe(
-                                subscription_data, &message);
-                    } else {
-                        ogs_error("HTTP response error : %d",
-                                message.res_status);
-                    }
-                    break;
-
-                CASE(OGS_SBI_HTTP_METHOD_PATCH)
-                    if (message.res_status == OGS_SBI_HTTP_STATUS_OK ||
-                        message.res_status == OGS_SBI_HTTP_STATUS_NO_CONTENT) {
-                        ogs_nnrf_nfm_handle_nf_status_update(
-                                subscription_data, &message);
-                    } else {
-                        ogs_error("[%s] HTTP response error [%d]",
-                                subscription_data->id ?
-                                    subscription_data->id : "Unknown",
-                                message.res_status);
-                    }
-                    break;
-
-                CASE(OGS_SBI_HTTP_METHOD_DELETE)
-                    if (message.res_status == OGS_SBI_HTTP_STATUS_NO_CONTENT)
-                        ogs_info("[%s] Subscription deleted",
-                                subscription_data->id ?
-                                    subscription_data->id : "Unknown");
-                    else
-                        ogs_error("[%s] HTTP response error [%d]",
-                                subscription_data->id ?
-                                    subscription_data->id : "Unknown",
-                                message.res_status);
-
-                    ogs_sbi_subscription_data_remove(subscription_data);
-                    break;
-
-                DEFAULT
-                    ogs_error("[%s] Invalid HTTP method [%s]",
-                            subscription_data->id, message.h.method);
-                    ogs_assert_if_reached();
-                END
+                ogs_nnrf_nfm_handle_nf_status_subscription_response(
+                        &message, e->h.sbi.data);
                 break;
 
             DEFAULT
@@ -301,7 +261,7 @@ void ausf_state_operational(ogs_fsm_t *s, ausf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NNRF_DISC)
+        case OpenAPI_service_name_nnrf_disc:
             SWITCH(message.h.resource.component[0])
             CASE(OGS_SBI_RESOURCE_NAME_NF_INSTANCES)
                 sbi_xact_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
@@ -339,7 +299,7 @@ void ausf_state_operational(ogs_fsm_t *s, ausf_event_t *e)
             END
             break;
 
-        CASE(OGS_SBI_SERVICE_NAME_NUDM_UEAU)
+        case OpenAPI_service_name_nudm_ueau:
             sbi_xact_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             ogs_assert(sbi_xact_id >= OGS_MIN_POOL_ID &&
                     sbi_xact_id <= OGS_MAX_POOL_ID);
@@ -382,10 +342,10 @@ void ausf_state_operational(ogs_fsm_t *s, ausf_event_t *e)
             }
             break;
 
-        DEFAULT
+        default:
             ogs_error("Invalid API name [%s]", message.h.service.name);
             ogs_assert_if_reached();
-        END
+        }
 
         ogs_sbi_message_free(&message);
         ogs_sbi_response_free(response);
@@ -399,9 +359,15 @@ void ausf_state_operational(ogs_fsm_t *s, ausf_event_t *e)
         case OGS_TIMER_NF_INSTANCE_HEARTBEAT_INTERVAL:
         case OGS_TIMER_NF_INSTANCE_NO_HEARTBEAT:
         case OGS_TIMER_NF_INSTANCE_VALIDITY:
-            nf_instance = e->h.sbi.data;
-            ogs_assert(nf_instance);
+            nf_instance = ogs_sbi_nf_instance_find_by_pool_id(
+                    OGS_POINTER_TO_UINT(e->h.sbi.data));
+            if (!nf_instance) {
+                ogs_error("NF Instance has already been removed [%d]",
+                        (int)OGS_POINTER_TO_UINT(e->h.sbi.data));
+                break;
+            }
             ogs_assert(OGS_FSM_STATE(&nf_instance->sm));
+            e->h.sbi.data = nf_instance;
 
             ogs_sbi_self()->nf_instance->load = get_ue_load();
 
@@ -413,27 +379,39 @@ void ausf_state_operational(ogs_fsm_t *s, ausf_event_t *e)
             break;
 
         case OGS_TIMER_SUBSCRIPTION_VALIDITY:
-            subscription_data = e->h.sbi.data;
-            ogs_assert(subscription_data);
-
-            ogs_assert(true ==
-                ogs_nnrf_nfm_send_nf_status_subscribe(
-                    ogs_sbi_self()->nf_instance->nf_type,
-                    subscription_data->req_nf_instance_id,
-                    subscription_data->subscr_cond.nf_type,
-                    subscription_data->subscr_cond.service_name));
+            subscription_data = ogs_sbi_subscription_data_find_by_pool_id(
+                    OGS_POINTER_TO_UINT(e->h.sbi.data));
+            if (!subscription_data) {
+                ogs_error("Subscription has already been removed [%d]",
+                        (int)OGS_POINTER_TO_UINT(e->h.sbi.data));
+                break;
+            }
 
             ogs_error("[%s] Subscription validity expired",
-                subscription_data->id);
-            ogs_sbi_subscription_data_remove(subscription_data);
+                    subscription_data->id ?
+                        subscription_data->id : "Unknown");
+
+            /*
+             * Helper strdup-s the fields we need, removes the old
+             * subscription so the pool slot is freed, then resubscribes.
+             */
+            (void)ogs_nnrf_nfm_send_nf_status_subscribe_renew(
+                    subscription_data);
             break;
 
         case OGS_TIMER_SUBSCRIPTION_PATCH:
-            subscription_data = e->h.sbi.data;
-            ogs_assert(subscription_data);
+            subscription_data = ogs_sbi_subscription_data_find_by_pool_id(
+                    OGS_POINTER_TO_UINT(e->h.sbi.data));
+            if (!subscription_data) {
+                ogs_error("Subscription has already been removed [%d]",
+                        (int)OGS_POINTER_TO_UINT(e->h.sbi.data));
+                break;
+            }
 
-            ogs_assert(true ==
-                ogs_nnrf_nfm_send_nf_status_update(subscription_data));
+            if (ogs_nnrf_nfm_send_nf_status_update(subscription_data) != true)
+                ogs_error("[%s] NF status subscription update failed",
+                        subscription_data->id ?
+                            subscription_data->id : "Unknown");
 
             ogs_info("[%s] Need to update Subscription",
                     subscription_data->id);

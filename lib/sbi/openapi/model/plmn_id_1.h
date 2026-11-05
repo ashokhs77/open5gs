@@ -8,20 +8,20 @@
 #define _OpenAPI_plmn_id_1_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_plmn_id_1_s OpenAPI_plmn_id_1_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_plmn_id_1_s OpenAPI_plmn_id_1_t;
-typedef struct OpenAPI_plmn_id_1_s {
+struct OpenAPI_plmn_id_1_s {
     char *mcc;
     char *mnc;
-} OpenAPI_plmn_id_1_t;
+};
 
 OpenAPI_plmn_id_1_t *OpenAPI_plmn_id_1_create(
     char *mcc,

@@ -174,6 +174,18 @@ sgwc_ue_t *sgwc_ue_add_by_message(ogs_gtp2_message_t *message)
         return NULL;
     }
 
+    /* Validate the peer's IMSI before the hash lookup, whose key must be
+     * nonempty, and before removing any context selected by that key. */
+    if (req->imsi.len == 0 || req->imsi.len > OGS_MAX_IMSI_LEN) {
+        ogs_error("Invalid IMSI length [%u], expected [1..%d]",
+                req->imsi.len, OGS_MAX_IMSI_LEN);
+        return NULL;
+    }
+    if (!req->imsi.data) {
+        ogs_error("Missing IMSI data [len:%u]", req->imsi.len);
+        return NULL;
+    }
+
     ogs_trace("sgwc_ue_add_by_message() - IMSI ");
     ogs_log_hexdump(OGS_LOG_TRACE, req->imsi.data, req->imsi.len);
 
@@ -212,9 +224,21 @@ sgwc_ue_t *sgwc_ue_add_by_message(ogs_gtp2_message_t *message)
 sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
 {
     sgwc_ue_t *sgwc_ue = NULL;
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
 
     ogs_assert(imsi);
-    ogs_assert(imsi_len);
+
+    if (imsi_len <= 0 || imsi_len > OGS_MAX_IMSI_LEN) {
+        ogs_error("Invalid IMSI length [%d], expected [1..%d]",
+                imsi_len, OGS_MAX_IMSI_LEN);
+        return NULL;
+    }
+
+    /* Decode before allocating, so a malformed IMSI has nothing to unwind */
+    if (!ogs_buffer_to_bcd(imsi, imsi_len, imsi_bcd, sizeof(imsi_bcd))) {
+        ogs_error("Invalid IMSI [len:%d]", imsi_len);
+        return NULL;
+    }
 
     ogs_pool_id_calloc(&sgwc_ue_pool, &sgwc_ue);
     if (!sgwc_ue) {
@@ -233,9 +257,9 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
             &sgwc_ue->sgw_s11_teid, sizeof(sgwc_ue->sgw_s11_teid), sgwc_ue);
 
     /* Set IMSI */
-    sgwc_ue->imsi_len = ogs_min(imsi_len, OGS_MAX_IMSI_LEN);
+    sgwc_ue->imsi_len = imsi_len;
     memcpy(sgwc_ue->imsi, imsi, sgwc_ue->imsi_len);
-    ogs_buffer_to_bcd(sgwc_ue->imsi, sgwc_ue->imsi_len, sgwc_ue->imsi_bcd);
+    ogs_cpystrn(sgwc_ue->imsi_bcd, imsi_bcd, sizeof(sgwc_ue->imsi_bcd));
 
     ogs_list_init(&sgwc_ue->sess_list);
 
@@ -257,7 +281,8 @@ int sgwc_ue_remove(sgwc_ue_t *sgwc_ue)
 
     ogs_hash_set(self.sgw_s11_teid_hash,
             &sgwc_ue->sgw_s11_teid, sizeof(sgwc_ue->sgw_s11_teid), NULL);
-    ogs_hash_set(self.imsi_ue_hash, sgwc_ue->imsi, sgwc_ue->imsi_len, NULL);
+    ogs_hash_unset_if_owner(self.imsi_ue_hash,
+            sgwc_ue->imsi, sgwc_ue->imsi_len, sgwc_ue);
 
     sgwc_sess_remove_all(sgwc_ue);
 
@@ -670,6 +695,7 @@ sgwc_tunnel_t *sgwc_tunnel_add(
 
     ogs_pfcp_pdr_t *pdr = NULL;
     ogs_pfcp_far_t *far = NULL;
+    sgwc_ue_t *sgwc_ue = NULL;
 
     ogs_pfcp_interface_t src_if = OGS_PFCP_INTERFACE_UNKNOWN;
     ogs_pfcp_interface_t dst_if = OGS_PFCP_INTERFACE_UNKNOWN;
@@ -727,7 +753,13 @@ sgwc_tunnel_t *sgwc_tunnel_add(
 
     pdr = ogs_pfcp_pdr_add(&sess->pfcp);
     if (!pdr) {
-        ogs_error("ogs_pfcp_pdr_add() failed");
+        sgwc_ue = sgwc_ue_find_by_id(bearer->sgwc_ue_id);
+        ogs_error("Cannot add PDR [IMSI:%s] [APN:%s] [EBI:%u] "
+                "[interface-type:%u] [PDR:%d/%d]",
+                sgwc_ue ? sgwc_ue->imsi_bcd : "unknown",
+                sess->session.name ? sess->session.name : "unknown",
+                (unsigned)bearer->ebi, (unsigned)interface_type,
+                ogs_list_count(&sess->pfcp.pdr_list), OGS_MAX_NUM_OF_PDR);
         sgwc_tunnel_remove(tunnel);
         return NULL;
     }
@@ -786,34 +818,19 @@ sgwc_tunnel_t *sgwc_tunnel_add(
         pdr->f_teid.ch = 1;
         pdr->f_teid_len = 1;
     } else {
-        ogs_gtpu_resource_t *resource = NULL;
-        resource = ogs_pfcp_find_gtpu_resource(
-                &sess->pfcp_node->gtpu_resource_list,
-                sess->session.name, pdr->src_if);
-        if (resource) {
-            ogs_user_plane_ip_resource_info_to_sockaddr(&resource->info,
-                &tunnel->local_addr, &tunnel->local_addr6);
-            if (resource->info.teidri)
-                tunnel->local_teid = OGS_PFCP_GTPU_INDEX_TO_TEID(
-                        pdr->teid, resource->info.teidri,
-                        resource->info.teid_range);
-            else
-                tunnel->local_teid = pdr->teid;
-        } else {
-            ogs_assert(sess->pfcp_node->addr_list);
-            if (sess->pfcp_node->addr_list->ogs_sa_family == AF_INET)
-                ogs_assert(OGS_OK ==
-                    ogs_copyaddrinfo(
-                        &tunnel->local_addr, sess->pfcp_node->addr_list));
-            else if (sess->pfcp_node->addr_list->ogs_sa_family == AF_INET6)
-                ogs_assert(OGS_OK ==
-                    ogs_copyaddrinfo(
-                        &tunnel->local_addr6, sess->pfcp_node->addr_list));
-            else
-                ogs_assert_if_reached();
+        ogs_assert(sess->pfcp_node->addr_list);
+        if (sess->pfcp_node->addr_list->ogs_sa_family == AF_INET)
+            ogs_assert(OGS_OK ==
+                ogs_copyaddrinfo(
+                    &tunnel->local_addr, sess->pfcp_node->addr_list));
+        else if (sess->pfcp_node->addr_list->ogs_sa_family == AF_INET6)
+            ogs_assert(OGS_OK ==
+                ogs_copyaddrinfo(
+                    &tunnel->local_addr6, sess->pfcp_node->addr_list));
+        else
+            ogs_assert_if_reached();
 
-            tunnel->local_teid = pdr->teid;
-        }
+        tunnel->local_teid = pdr->teid;
 
         ogs_assert(OGS_OK ==
             ogs_pfcp_sockaddr_to_f_teid(

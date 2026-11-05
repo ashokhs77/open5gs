@@ -1,14 +1,14 @@
 /*
  * odb_packet_services.h
  *
- * 
+ * The enumeration OdbPacketServices defines the Barring of Packet Oriented Services. See 3GPP TS 23.015 for further description. It shall comply with the provisions defined in table 5.7.3.2-1 
  */
 
 #ifndef _OpenAPI_odb_packet_services_H_
 #define _OpenAPI_odb_packet_services_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

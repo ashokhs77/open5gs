@@ -313,7 +313,7 @@ int sgsap_send_uplink_unitdata(mme_ue_t *mme_ue,
     ogs_pkbuf_t *pkbuf = NULL;
     ogs_assert(mme_ue);
     ogs_assert(nas_message_container);
-	
+
 	sgsap_strip_91_from_mo_sms(nas_message_container);
 
     ogs_debug("[SGSAP] UPLINK-UNITDATA");

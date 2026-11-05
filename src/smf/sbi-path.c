@@ -47,9 +47,9 @@ int smf_sbi_open(void)
     ogs_sbi_nf_instance_add_allowed_nf_type(nf_instance, OpenAPI_nf_type_SMF);
 
     /* Build NF service information. It will be transmitted to NRF. */
-    if (ogs_sbi_nf_service_is_available(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)) {
+    if (ogs_sbi_nf_service_is_available(OpenAPI_service_name_nsmf_pdusession)) {
         service = ogs_sbi_nf_service_build_default(
-                    nf_instance, OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION);
+                    nf_instance, OpenAPI_service_name_nsmf_pdusession);
         ogs_assert(service);
         ogs_sbi_nf_service_add_version(
                     service, OGS_SBI_API_V1, OGS_SBI_API_V1_0_0, NULL);
@@ -63,15 +63,16 @@ int smf_sbi_open(void)
         ogs_sbi_nf_fsm_init(nf_instance);
 
     /* Setup Subscription-Data */
-    ogs_sbi_subscription_spec_add(OpenAPI_nf_type_SEPP, NULL);
     ogs_sbi_subscription_spec_add(
-            OpenAPI_nf_type_NULL, OGS_SBI_SERVICE_NAME_NAMF_COMM);
+            OpenAPI_nf_type_SEPP, OpenAPI_service_name_NULL);
     ogs_sbi_subscription_spec_add(
-            OpenAPI_nf_type_NULL, OGS_SBI_SERVICE_NAME_NPCF_SMPOLICYCONTROL);
+            OpenAPI_nf_type_NULL, OpenAPI_service_name_namf_comm);
     ogs_sbi_subscription_spec_add(
-            OpenAPI_nf_type_NULL, OGS_SBI_SERVICE_NAME_NUDM_SDM);
+            OpenAPI_nf_type_NULL, OpenAPI_service_name_npcf_smpolicycontrol);
     ogs_sbi_subscription_spec_add(
-            OpenAPI_nf_type_NULL, OGS_SBI_SERVICE_NAME_NUDM_UECM);
+            OpenAPI_nf_type_NULL, OpenAPI_service_name_nudm_sdm);
+    ogs_sbi_subscription_spec_add(
+            OpenAPI_nf_type_NULL, OpenAPI_service_name_nudm_uecm);
 
     if (ogs_sbi_server_start_all(ogs_sbi_server_handler) != OGS_OK)
         return OGS_ERROR;
@@ -94,7 +95,7 @@ bool smf_sbi_send_request(
 }
 
 int smf_sbi_discover_and_send(
-        ogs_sbi_service_type_e service_type,
+        OpenAPI_service_name_e service_name,
         ogs_sbi_discovery_option_t *discovery_option,
         ogs_sbi_request_t *(*build)(smf_sess_t *sess, void *data),
         smf_sess_t *sess, ogs_sbi_stream_t *stream, int state, void *data)
@@ -104,8 +105,8 @@ int smf_sbi_discover_and_send(
     ogs_sbi_xact_t *xact = NULL;
     OpenAPI_nf_type_e target_nf_type = OpenAPI_nf_type_NULL;
 
-    ogs_assert(service_type);
-    target_nf_type = ogs_sbi_service_type_to_nf_type(service_type);
+    ogs_assert(service_name);
+    target_nf_type = ogs_sbi_service_name_to_nf_type(service_name);
     ogs_assert(target_nf_type);
     ogs_assert(sess);
     smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
@@ -200,7 +201,7 @@ int smf_sbi_discover_and_send(
     }
 
     xact = ogs_sbi_xact_add(
-            sess->id, &sess->sbi, service_type, discovery_option,
+            sess->id, &sess->sbi, service_name, discovery_option,
             (ogs_sbi_build_f)build, sess, data);
     if (!xact) {
         ogs_error("smf_sbi_discover_and_send() failed");
@@ -257,8 +258,32 @@ ogs_sbi_xact_t *smf_namf_comm_create_n1_n2_message_xact(
     ogs_sbi_discovery_option_set_target_nf_instance_id(
             discovery_option, sess->amf_nf_id);
 
+    /*
+     * [Issue #4741]
+     *
+     * In the H-SMF the AMF this is addressed to lives in the serving
+     * PLMN, so the discovery has to say which PLMN to look in, the same
+     * way the AMF names the home PLMN when it discovers the AUSF or the
+     * UDM of a roaming UE. Without it the discovery stays in the home
+     * PLMN, finds no AMF and the transfer fails with 504, which is why a
+     * network triggered Service Request never left the H-SMF.
+     */
+    if (HOME_ROUTED_ROAMING_IN_HSMF(sess)) {
+        int i;
+
+        ogs_sbi_discovery_option_add_target_plmn_list(
+                discovery_option, &sess->serving_plmn_id);
+
+        ogs_assert(ogs_local_conf()->num_of_serving_plmn_id);
+        for (i = 0; i < ogs_local_conf()->num_of_serving_plmn_id; i++) {
+            ogs_sbi_discovery_option_add_requester_plmn_list(
+                    discovery_option,
+                    &ogs_local_conf()->serving_plmn_id[i]);
+        }
+    }
+
     xact = ogs_sbi_xact_add(
-            sess->id, &sess->sbi, OGS_SBI_SERVICE_TYPE_NAMF_COMM,
+            sess->id, &sess->sbi, OpenAPI_service_name_namf_comm,
             discovery_option,
             (ogs_sbi_build_f)smf_namf_comm_build_n1_n2_message_transfer,
             sess, param);
@@ -273,6 +298,18 @@ ogs_sbi_xact_t *smf_namf_comm_create_n1_n2_message_xact(
         xact->assoc_stream_id = ogs_sbi_id_from_stream(stream);
         ogs_assert(xact->assoc_stream_id >= OGS_MIN_POOL_ID &&
                 xact->assoc_stream_id <= OGS_MAX_POOL_ID);
+
+        if (HOME_ROUTED_ROAMING_IN_VSMF(sess) &&
+                param->state == SMF_NETWORK_REQUESTED_QOS_FLOW_MODIFICATION) {
+            /* Save before sending or queuing N1N2. The UE may complete the
+             * modification before the AMF's transfer response arrives. */
+            if (sess->vsmf_to_hsmf_modify_stream_id >= OGS_MIN_POOL_ID &&
+                sess->vsmf_to_hsmf_modify_stream_id <= OGS_MAX_POOL_ID)
+                ogs_error("N1 N2 modified stream ID [%d] "
+                        "has not been used yet",
+                        sess->vsmf_to_hsmf_modify_stream_id);
+            sess->vsmf_to_hsmf_modify_stream_id = xact->assoc_stream_id;
+        }
     }
 
     return xact;
@@ -333,7 +370,8 @@ void smf_sbi_send_sm_context_created_data(
     memset(&sendmsg, 0, sizeof(sendmsg));
 
     memset(&header, 0, sizeof(header));
-    header.service.name = (char *)OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION;
+    header.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nsmf_pdusession);
     header.api.version = (char *)OGS_SBI_API_V1;
     header.resource.component[0] =
         (char *)OGS_SBI_RESOURCE_NAME_SM_CONTEXTS;
@@ -407,10 +445,11 @@ void smf_sbi_send_sm_context_create_error(
         ogs_pkbuf_free(n1smbuf);
 }
 
-void smf_sbi_send_pdu_session_created_data(
+bool smf_sbi_send_pdu_session_created_data(
         smf_sess_t *sess, ogs_sbi_stream_t *stream)
 {
     int rv;
+    bool success = false;
     OpenAPI_pdu_session_created_data_t PduSessionCreatedData;
 
     OpenAPI_tunnel_info_t hcnTunnelInfo;
@@ -521,21 +560,25 @@ void smf_sbi_send_pdu_session_created_data(
         qosFlowSetupItem->default_qos_rule_ind = true;
     }
 
-    enc_len = ogs_base64_encode_len(authorized_qos_rules.length);
+    enc_len = ogs_base64_encoded_size(authorized_qos_rules.length);
+    ogs_assert(enc_len > 0);
     qosFlowSetupItem->qos_rules = ogs_calloc(1, enc_len);
     ogs_assert(qosFlowSetupItem->qos_rules);
-    ogs_base64_encode(qosFlowSetupItem->qos_rules,
-            authorized_qos_rules.buffer, authorized_qos_rules.length);
+    ogs_assert(ogs_base64_encode_from_buffer(qosFlowSetupItem->qos_rules,
+            enc_len, authorized_qos_rules.buffer,
+            authorized_qos_rules.length) > 0);
 
     ogs_free(authorized_qos_rules.buffer);
 
-    enc_len = ogs_base64_encode_len(
+    enc_len = ogs_base64_encoded_size(
             authorized_qos_flow_descriptions.length);
+    ogs_assert(enc_len > 0);
     qosFlowSetupItem->qos_flow_description = ogs_calloc(1, enc_len);
     ogs_assert(qosFlowSetupItem->qos_flow_description);
-    ogs_base64_encode(qosFlowSetupItem->qos_flow_description,
+    ogs_assert(ogs_base64_encode_from_buffer(
+            qosFlowSetupItem->qos_flow_description, enc_len,
             authorized_qos_flow_descriptions.buffer,
-            authorized_qos_flow_descriptions.length);
+            authorized_qos_flow_descriptions.length) > 0);
 
     ogs_free(authorized_qos_flow_descriptions.buffer);
 
@@ -613,7 +656,14 @@ void smf_sbi_send_pdu_session_created_data(
     memset(&sendmsg, 0, sizeof(sendmsg));
 
     n1SmBufToUe = gsmue_build_pdu_session_establishment_accept(sess);
-    ogs_assert(n1SmBufToUe);
+    if (!n1SmBufToUe) {
+        ogs_error("gsmue_build_pdu_session_establishment_accept() failed");
+        smf_sbi_send_pdu_session_create_error(stream,
+                OGS_SBI_HTTP_STATUS_BAD_REQUEST, OGS_SBI_APP_ERRNO_NULL,
+                OGS_5GSM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE,
+                "Invalid protocol configuration options", NULL, NULL);
+        goto end;
+    }
 
     n1SmInfoToUe.content_id = (char *)OGS_SBI_CONTENT_5GNAS_SM_ID;
     PduSessionCreatedData.n1_sm_info_to_ue = &n1SmInfoToUe;
@@ -626,7 +676,8 @@ void smf_sbi_send_pdu_session_created_data(
     sendmsg.num_of_part++;
 
     memset(&header, 0, sizeof(header));
-    header.service.name = (char *)OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION;
+    header.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nsmf_pdusession);
     header.api.version = (char *)OGS_SBI_API_V1;
     header.resource.component[0] =
         (char *)OGS_SBI_RESOURCE_NAME_PDU_SESSIONS;
@@ -646,6 +697,7 @@ void smf_sbi_send_pdu_session_created_data(
     ogs_assert(true == ogs_sbi_server_send_response(stream, response));
 
     ogs_free(sendmsg.http.location);
+    success = true;
 
 end:
     if (hcnTunnelInfo.ipv4_addr)
@@ -666,6 +718,8 @@ end:
         ogs_free(PduSessionCreatedData.ue_ipv4_address);
     if (PduSessionCreatedData.ue_ipv6_prefix)
         ogs_free(PduSessionCreatedData.ue_ipv6_prefix);
+
+    return success;
 }
 
 void smf_sbi_send_sm_context_updated_data(
@@ -863,7 +917,7 @@ int smf_sbi_cleanup_session(
     case SMF_SBI_CLEANUP_MODE_POLICY_FIRST:
         if (PCF_SM_POLICY_ASSOCIATED(sess)) {
             r = smf_sbi_discover_and_send(
-                OGS_SBI_SERVICE_TYPE_NPCF_SMPOLICYCONTROL,
+                OpenAPI_service_name_npcf_smpolicycontrol,
                 NULL,
                 smf_npcf_smpolicycontrol_build_delete,
                 sess, stream, state, NULL);
@@ -873,7 +927,7 @@ int smf_sbi_cleanup_session(
             ogs_error("[%s:%d] No PolicyAssociationId. Forcibly remove SESSION",
                     smf_ue->supi, sess->psi);
             r = smf_sbi_discover_and_send(
-                OGS_SBI_SERVICE_TYPE_NUDM_SDM,
+                OpenAPI_service_name_nudm_sdm,
                 NULL,
                 smf_nudm_sdm_build_subscription_delete,
                 sess, stream, state, NULL);
@@ -883,7 +937,7 @@ int smf_sbi_cleanup_session(
             ogs_error("[%s:%d] No UDM Subscription. Forcibly remove SESSION",
                     smf_ue->supi, sess->psi);
             r = smf_sbi_discover_and_send(
-                OGS_SBI_SERVICE_TYPE_NUDM_UECM,
+                OpenAPI_service_name_nudm_uecm,
                 NULL,
                 smf_nudm_uecm_build_deregistration,
                 sess, stream, state, NULL);
@@ -895,7 +949,7 @@ int smf_sbi_cleanup_session(
     case SMF_SBI_CLEANUP_MODE_SUBSCRIPTION_FIRST:
         if (UDM_SDM_SUBSCRIBED(sess)) {
             r = smf_sbi_discover_and_send(
-                OGS_SBI_SERVICE_TYPE_NUDM_SDM,
+                OpenAPI_service_name_nudm_sdm,
                 NULL,
                 smf_nudm_sdm_build_subscription_delete,
                 sess, stream, state, NULL);
@@ -905,7 +959,7 @@ int smf_sbi_cleanup_session(
             ogs_error("[%s:%d] No UDM Subscription. Forcibly remove SESSION",
                     smf_ue->supi, sess->psi);
             r = smf_sbi_discover_and_send(
-                OGS_SBI_SERVICE_TYPE_NUDM_UECM,
+                OpenAPI_service_name_nudm_uecm,
                 NULL,
                 smf_nudm_uecm_build_deregistration,
                 sess, stream, state, NULL);
@@ -916,7 +970,7 @@ int smf_sbi_cleanup_session(
 
     case SMF_SBI_CLEANUP_MODE_CONTEXT_ONLY:
         r = smf_sbi_discover_and_send(
-            OGS_SBI_SERVICE_TYPE_NUDM_UECM,
+            OpenAPI_service_name_nudm_uecm,
             NULL,
             smf_nudm_uecm_build_deregistration,
             sess, stream, state, NULL);

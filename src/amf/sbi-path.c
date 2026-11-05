@@ -21,6 +21,7 @@
 #include "nas-path.h"
 #include "ngap-path.h"
 #include "nnrf-handler.h"
+#include "n5geir-build.h"
 
 int amf_sbi_open(void)
 {
@@ -39,9 +40,9 @@ int amf_sbi_open(void)
     ogs_sbi_nf_instance_add_allowed_nf_type(nf_instance, OpenAPI_nf_type_AMF);
 
     /* Build NF service information. It will be transmitted to NRF. */
-    if (ogs_sbi_nf_service_is_available(OGS_SBI_SERVICE_NAME_NAMF_COMM)) {
+    if (ogs_sbi_nf_service_is_available(OpenAPI_service_name_namf_comm)) {
         service = ogs_sbi_nf_service_build_default(
-                    nf_instance, OGS_SBI_SERVICE_NAME_NAMF_COMM);
+                    nf_instance, OpenAPI_service_name_namf_comm);
         ogs_assert(service);
         ogs_sbi_nf_service_add_version(
                     service, OGS_SBI_API_V1, OGS_SBI_API_V1_0_0, NULL);
@@ -55,19 +56,23 @@ int amf_sbi_open(void)
         ogs_sbi_nf_fsm_init(nf_instance);
 
     /* Setup Subscription-Data */
-    ogs_sbi_subscription_spec_add(OpenAPI_nf_type_SEPP, NULL);
     ogs_sbi_subscription_spec_add(
-            OpenAPI_nf_type_NULL, OGS_SBI_SERVICE_NAME_NAUSF_AUTH);
+            OpenAPI_nf_type_SEPP, OpenAPI_service_name_NULL);
     ogs_sbi_subscription_spec_add(
-            OpenAPI_nf_type_NULL, OGS_SBI_SERVICE_NAME_NUDM_UECM);
+            OpenAPI_nf_type_NULL, OpenAPI_service_name_nausf_auth);
     ogs_sbi_subscription_spec_add(
-            OpenAPI_nf_type_NULL, OGS_SBI_SERVICE_NAME_NUDM_SDM);
+            OpenAPI_nf_type_NULL, OpenAPI_service_name_nudm_uecm);
     ogs_sbi_subscription_spec_add(
-            OpenAPI_nf_type_NULL, OGS_SBI_SERVICE_NAME_NPCF_AM_POLICY_CONTROL);
+            OpenAPI_nf_type_NULL, OpenAPI_service_name_nudm_sdm);
     ogs_sbi_subscription_spec_add(
-            OpenAPI_nf_type_NULL, OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION);
+            OpenAPI_nf_type_NULL, OpenAPI_service_name_npcf_am_policy_control);
     ogs_sbi_subscription_spec_add(
-            OpenAPI_nf_type_NULL, OGS_SBI_SERVICE_NAME_NNSSF_NSSELECTION);
+            OpenAPI_nf_type_NULL, OpenAPI_service_name_nsmf_pdusession);
+    ogs_sbi_subscription_spec_add(
+            OpenAPI_nf_type_NULL, OpenAPI_service_name_nnssf_nsselection);
+    if (amf_self()->eir.enabled)
+        ogs_sbi_subscription_spec_add(
+                OpenAPI_nf_type_NULL, OpenAPI_service_name_n5g_eir_eic);
 
     if (ogs_sbi_server_start_all(ogs_sbi_server_handler) != OGS_OK)
         return OGS_ERROR;
@@ -90,7 +95,7 @@ bool amf_sbi_send_request(
 }
 
 int amf_ue_sbi_discover_and_send(
-        ogs_sbi_service_type_e service_type,
+        OpenAPI_service_name_e service_name,
         ogs_sbi_discovery_option_t *discovery_option,
         ogs_sbi_request_t *(*build)(amf_ue_t *amf_ue, void *data),
         amf_ue_t *amf_ue, int state, void *data)
@@ -100,8 +105,8 @@ int amf_ue_sbi_discover_and_send(
     ogs_sbi_xact_t *xact = NULL;
     OpenAPI_nf_type_e target_nf_type = OpenAPI_nf_type_NULL;
 
-    ogs_assert(service_type);
-    target_nf_type = ogs_sbi_service_type_to_nf_type(service_type);
+    ogs_assert(service_name);
+    target_nf_type = ogs_sbi_service_name_to_nf_type(service_name);
     ogs_assert(target_nf_type);
     ogs_assert(amf_ue);
     ogs_assert(build);
@@ -127,7 +132,7 @@ int amf_ue_sbi_discover_and_send(
     }
 
     xact = ogs_sbi_xact_add(
-            amf_ue->id, &amf_ue->sbi, service_type, discovery_option,
+            amf_ue->id, &amf_ue->sbi, service_name, discovery_option,
             (ogs_sbi_build_f)build, amf_ue, data);
     if (!xact) {
         ogs_error("amf_ue_sbi_discover_and_send() failed");
@@ -154,13 +159,40 @@ int amf_ue_sbi_discover_and_send(
     return OGS_OK;
 }
 
+/* The UE FSM applies failure_action instead of the generic SBI reject. */
+int amf_ue_sbi_discover_and_send_eir(amf_ue_t *amf_ue)
+{
+    int rv;
+    ogs_sbi_xact_t *xact = NULL;
+
+    ogs_assert(amf_ue);
+
+    xact = ogs_sbi_xact_add(
+            amf_ue->id, &amf_ue->sbi,
+            OpenAPI_service_name_n5g_eir_eic, NULL,
+            (ogs_sbi_build_f)amf_n5geir_eic_build_equipment_status,
+            amf_ue, NULL);
+    if (!xact) {
+        ogs_error("[%s] Cannot create 5G-EIR transaction", amf_ue->supi);
+        return OGS_ERROR;
+    }
+
+    rv = ogs_sbi_discover_and_send(xact);
+    if (rv != OGS_OK) {
+        ogs_error("[%s] Cannot send 5G-EIR request [error:%d]",
+                amf_ue->supi, rv);
+        ogs_sbi_xact_remove(xact);
+    }
+    return rv;
+}
+
 static void amf_sbi_xact_ctx_free(void *data)
 {
     ogs_free(data);
 }
 
 int amf_sess_sbi_discover_and_send(
-        ogs_sbi_service_type_e service_type,
+        OpenAPI_service_name_e service_name,
         ogs_sbi_discovery_option_t *discovery_option,
         ogs_sbi_request_t *(*build)(amf_sess_t *sess, void *data),
         ran_ue_t *ran_ue, amf_sess_t *sess, int state, void *data)
@@ -169,7 +201,7 @@ int amf_sess_sbi_discover_and_send(
     int rv;
     ogs_sbi_xact_t *xact = NULL;
 
-    ogs_assert(service_type);
+    ogs_assert(service_name);
     ogs_assert(sess);
     ogs_assert(build);
 
@@ -205,7 +237,7 @@ int amf_sess_sbi_discover_and_send(
         sess->ran_ue_id = OGS_INVALID_POOL_ID;
 
     xact = ogs_sbi_xact_add(
-            sess->id, &sess->sbi, service_type, discovery_option,
+            sess->id, &sess->sbi, service_name, discovery_option,
             (ogs_sbi_build_f)build, sess, data);
     if (!xact) {
         ogs_error("amf_sess_sbi_discover_and_send() failed");
@@ -225,6 +257,8 @@ int amf_sess_sbi_discover_and_send(
         ogs_assert(ctx);
 
         ctx->ran_ue_id = ran_ue->id;
+        ctx->target_ue_id = ran_ue->target_ue_id;
+
         xact->user_data = ctx;
         xact->user_data_free = amf_sbi_xact_ctx_free;
     }
@@ -255,7 +289,7 @@ static int client_discover_cb(
 
     ogs_sbi_xact_t *xact = NULL;
     ogs_pool_id_t xact_id = OGS_INVALID_POOL_ID;
-    ogs_sbi_service_type_e service_type = OGS_SBI_SERVICE_TYPE_NULL;
+    OpenAPI_service_name_e service_name = OpenAPI_service_name_NULL;
     OpenAPI_nf_type_e target_nf_type = OpenAPI_nf_type_NULL;
     OpenAPI_nf_type_e requester_nf_type = OpenAPI_nf_type_NULL;
     ogs_sbi_discovery_option_t *discovery_option = NULL;
@@ -290,9 +324,9 @@ static int client_discover_cb(
     if (ran_ue_id >= OGS_MIN_POOL_ID && ran_ue_id <= OGS_MAX_POOL_ID)
         ran_ue = ran_ue_find_by_id(ran_ue_id);
 
-    service_type = xact->service_type;
-    ogs_assert(service_type);
-    target_nf_type = ogs_sbi_service_type_to_nf_type(service_type);
+    service_name = xact->service_name;
+    ogs_assert(service_name);
+    target_nf_type = ogs_sbi_service_name_to_nf_type(service_name);
     ogs_assert(target_nf_type);
     requester_nf_type = xact->requester_nf_type;
     ogs_assert(requester_nf_type);
@@ -369,6 +403,24 @@ static int client_discover_cb(
 
         goto cleanup;
     }
+    if (!message.SearchResult->validity_period) {
+        ogs_error("No SearchResult->validity_period");
+        r = nas_5gs_send_back_gsm_message(ran_ue, sess,
+            OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED, AMF_NAS_BACKOFF_TIME);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+
+        goto cleanup;
+    }
+    if (!message.SearchResult->nf_instances) {
+        ogs_error("No SearchResult->nf_instances");
+        r = nas_5gs_send_back_gsm_message(ran_ue, sess,
+            OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED, AMF_NAS_BACKOFF_TIME);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+
+        goto cleanup;
+    }
 
     ogs_nnrf_disc_handle_nf_discover_search_result(message.SearchResult);
 
@@ -377,7 +429,7 @@ static int client_discover_cb(
     if (!nf_instance) {
         ogs_error("[%s:%d] (NF discover) No [%s]",
                     amf_ue->supi, sess->psi,
-                    ogs_sbi_service_type_to_name(service_type));
+                    OpenAPI_service_name_ToString(service_name));
         r = nas_5gs_send_back_gsm_message(ran_ue, sess,
                 OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED,
                 AMF_NAS_BACKOFF_TIME);
@@ -396,7 +448,7 @@ static int client_discover_cb(
 
     if (current_state == AMF_SMF_SELECTION_IN_VPLMN_IN_NON_ROAMING_OR_LBO) {
         OGS_SBI_SETUP_NF_INSTANCE(
-                sess->sbi.service_type_array[service_type], nf_instance);
+                sess->sbi.service_name_array[service_name], nf_instance);
 
     } else if (current_state == AMF_SMF_SELECTION_IN_VPLMN_IN_HOME_ROUTED) {
         /* Home-Routed roaming */
@@ -405,7 +457,7 @@ static int client_discover_cb(
         ogs_info("Home-Routed Roaming(VPLMN)");
 
         OGS_SBI_SETUP_NF_INSTANCE(
-                sess->sbi.service_type_array[service_type], nf_instance);
+                sess->sbi.service_name_array[service_name], nf_instance);
 
         h_smf_instance = OGS_SBI_GET_NF_INSTANCE(
                 sess->sbi.home_nsmf_pdusession);
@@ -477,7 +529,7 @@ static int client_discover_cb(
         /* No H-SMF Instance */
         ogs_info("H-SMF not discovered");
         r = amf_sess_sbi_discover_and_send(
-                OGS_SBI_SERVICE_TYPE_NNSSF_NSSELECTION, NULL,
+                OpenAPI_service_name_nnssf_nsselection, NULL,
                 amf_nnssf_nsselection_build_get, ran_ue, sess,
                 AMF_SMF_SELECTION_IN_HPLMN_IN_HOME_ROUTED, &param);
         ogs_expect(r == OGS_OK);
@@ -488,7 +540,7 @@ static int client_discover_cb(
     } else if (next_state == AMF_CREATE_SM_CONTEXT_NO_STATE) {
 
         r = amf_sess_sbi_discover_and_send(
-                service_type, v_discovery_option,
+                service_name, v_discovery_option,
                 amf_nsmf_pdusession_build_create_sm_context,
                 ran_ue, sess, next_state, NULL);
         ogs_expect(r == OGS_OK);
@@ -517,7 +569,7 @@ cleanup:
 
 int amf_sess_sbi_discover_by_nsi(
         ran_ue_t *ran_ue, amf_sess_t *sess,
-        ogs_sbi_service_type_e service_type,
+        OpenAPI_service_name_e service_name,
         ogs_sbi_discovery_option_t *discovery_option, int state)
 {
     ogs_sbi_xact_t *xact = NULL;
@@ -526,11 +578,11 @@ int amf_sess_sbi_discover_by_nsi(
     ogs_assert(sess);
     client = sess->nssf.nrf.client;
     ogs_assert(client);
-    ogs_assert(service_type);
+    ogs_assert(service_name);
     ogs_assert(state);
 
     ogs_warn("Try to discover by NsiInformation [%s]",
-                ogs_sbi_service_type_to_name(service_type));
+            OpenAPI_service_name_ToString(service_name));
 
     if (ran_ue) {
         sess->ran_ue_id = ran_ue->id;
@@ -539,14 +591,14 @@ int amf_sess_sbi_discover_by_nsi(
 
     xact = ogs_sbi_xact_add(
             sess->id, &sess->sbi,
-            service_type, discovery_option, NULL, NULL, NULL);
+            service_name, discovery_option, NULL, NULL, NULL);
     if (!xact) {
         ogs_error("ogs_sbi_xact_add() failed");
         return OGS_ERROR;
     }
 
     xact->request = amf_nnrf_disc_build_discover(
-                sess->nssf.nrf_uri, xact->service_type, xact->discovery_option);
+                sess->nssf.nrf_uri, xact->service_name, xact->discovery_option);
     if (!xact->request) {
         ogs_error("amf_nnrf_disc_build_discover() failed");
         ogs_sbi_xact_remove(xact);
@@ -584,7 +636,7 @@ void amf_sbi_send_activating_session(
     param.upCnxState = OpenAPI_up_cnx_state_ACTIVATING;
 
     r = amf_sess_sbi_discover_and_send(
-            OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+            OpenAPI_service_name_nsmf_pdusession, NULL,
             amf_nsmf_pdusession_build_update_sm_context,
             ran_ue, sess, state, &param);
     ogs_expect(r == OGS_OK);
@@ -607,7 +659,7 @@ void amf_sbi_send_deactivate_session(
     param.ue_timezone = true;
 
     r = amf_sess_sbi_discover_and_send(
-            OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+            OpenAPI_service_name_nsmf_pdusession, NULL,
             amf_nsmf_pdusession_build_update_sm_context,
             ran_ue, sess, state, &param);
     ogs_expect(r == OGS_OK);
@@ -624,6 +676,177 @@ void amf_sbi_send_deactivate_all_sessions(
     ogs_list_for_each(&amf_ue->sess_list, sess) {
         if (SESSION_CONTEXT_IN_SMF(sess))
             amf_sbi_send_deactivate_session(ran_ue, sess, state, group, cause);
+    }
+}
+
+/*
+ * Is another user-plane procedure for this session already running on some
+ * other NG context?
+ *
+ * amf_sess_sbi_discover_and_send() records the RAN-UE each transaction was
+ * issued on, which is what tells a procedure belonging to the context being
+ * removed from one belonging to the connection the UE uses now.
+ *
+ * This deliberately counts every kind of Update SM Context, unlike
+ * update_sm_context_supersedes_stale_user_plane(), because the two answer
+ * different questions. A completed procedure must have moved the user
+ * plane for its answer to spend the note, but a procedure still in flight
+ * only has to be ABLE to - racing a handover preparation or an activation
+ * with DEACTIVATED could tear down the user plane it is setting up, and
+ * when in doubt the sweep steps aside. A release never reaches this test:
+ * amf_sbi_send_release_session() consumes the note as it dispatches.
+ */
+static bool newer_procedure_in_progress(amf_sess_t *sess, ran_ue_t *ran_ue)
+{
+    ogs_sbi_xact_t *xact = NULL;
+
+    ogs_assert(sess);
+    ogs_assert(ran_ue);
+
+    ogs_list_for_each(&sess->sbi.xact_list, xact) {
+        amf_sbi_xact_ctx_t *ctx = xact->user_data;
+
+        if (xact->service_name != OpenAPI_service_name_nsmf_pdusession)
+            continue;
+        if (!ctx)
+            continue;
+        if (ctx->ran_ue_id == ran_ue->id)
+            continue;
+
+        return true;
+    }
+
+    return false;
+}
+
+/*
+ * Deactivate the user plane a held NG context left behind.
+ *
+ * Call this immediately before removing a held NG context. It is a no-op
+ * for a context that was never held.
+ *
+ * The deactivation is sent on behalf of the NG context the UE is using
+ * now, because amf_sess_sbi_discover_and_send() records the RAN-UE in
+ * sess->ran_ue_id and the Namf callbacks reach the UE through it.
+ */
+void amf_sbi_send_deactivate_stale_user_plane(ran_ue_t *ran_ue)
+{
+    amf_ue_t *amf_ue = NULL;
+    ran_ue_t *current_ue = NULL;
+    amf_sess_t *sess = NULL;
+
+    ogs_assert(ran_ue);
+
+    if (ran_ue->holding_amf_ue_id == OGS_INVALID_POOL_ID)
+        return;
+
+    amf_ue = amf_ue_find_by_id(ran_ue->holding_amf_ue_id);
+    ran_ue->holding_amf_ue_id = OGS_INVALID_POOL_ID;
+    if (!amf_ue) {
+        ogs_warn("UE(amf_ue) Context has already been removed "
+                "[RAN_UE_NGAP_ID:%lld]",
+                (long long)ran_ue->ran_ue_ngap_id);
+        return;
+    }
+
+    /*
+     * Normally the UE has the newer NG context that caused this one to be
+     * held. If even that is gone, current_ue is NULL, sess->ran_ue_id ends
+     * up invalid, and the cleanup stays best-effort: the SBI path is not
+     * guaranteed to carry a transaction without a RAN-UE to completion.
+     */
+    current_ue = ran_ue_find_by_id(amf_ue->ran_ue_id);
+    if (!current_ue)
+        ogs_warn("[%s] No serving NG context for the stale user plane",
+                amf_ue->supi ? amf_ue->supi : "Unknown");
+
+    /*
+     * Drop the holder's reference before the context is freed. Pool ids are
+     * reused, so a reference left behind can later resolve to an unrelated
+     * NG context and have a UEContextReleaseCommand sent to it.
+     */
+    if (amf_ue->ran_ue_holding_id == ran_ue->id)
+        amf_ue->ran_ue_holding_id = OGS_INVALID_POOL_ID;
+
+    ogs_list_for_each(&amf_ue->sess_list, sess) {
+        if (sess->stale_ran_ue_id != ran_ue->id)
+            continue;
+
+        /*
+         * The context the note is about is going away, and with it the
+         * last chance to act on the note, so it is consumed no matter
+         * which way the decision below goes. What must not stay behind
+         * is the pool id of a freed context, which a later holding
+         * could be assigned.
+         */
+        sess->stale_ran_ue_id = OGS_INVALID_POOL_ID;
+
+        if (!SESSION_CONTEXT_IN_SMF(sess)) {
+            ogs_warn("[%s:%d] SM context has already been released "
+                    "[RAN_UE_NGAP_ID:%lld]",
+                    amf_ue->supi ? amf_ue->supi : "Unknown", sess->psi,
+                    (long long)ran_ue->ran_ue_ngap_id);
+            continue;
+        }
+
+        /*
+         * An Update SM Context issued on a DIFFERENT NG context is a newer
+         * procedure, and it owns where this user plane ends up. Sending
+         * DEACTIVATED now would race it, and if that procedure is the UE
+         * re-activating the session, the loser would be the user plane
+         * that was just set up.
+         *
+         * A transaction issued on the context being removed is the
+         * opposite: it belongs to the user plane that is going stale, and
+         * must not stop the cleanup. An ACTIVATED still in flight for it
+         * would otherwise leave the SMF pointing at a GTP-U endpoint that
+         * is gone, which is the very thing being fixed here.
+         *
+         * Stepping aside moves the responsibility to that procedure.
+         * Should it then fail, the cleanup is not retried: that is the
+         * limit the commit message states.
+         */
+        if (newer_procedure_in_progress(sess, ran_ue)) {
+            ogs_debug("[%s:%d] Stale user plane left to the procedure "
+                    "in progress [RAN_UE_NGAP_ID:%lld]",
+                    amf_ue->supi ? amf_ue->supi : "Unknown", sess->psi,
+                    (long long)ran_ue->ran_ue_ngap_id);
+            continue;
+        }
+
+        ogs_warn("[%s:%d] Deactivating the stale user plane "
+                "[RAN_UE_NGAP_ID:%lld]",
+                amf_ue->supi ? amf_ue->supi : "Unknown", sess->psi,
+                (long long)ran_ue->ran_ue_ngap_id);
+
+        amf_sbi_send_deactivate_session(
+                current_ue, sess, AMF_UPDATE_SM_CONTEXT_STALE_USER_PLANE,
+                NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release);
+    }
+}
+
+static void amf_sbi_release_ran_ue_on_gnb_remove(
+        amf_ue_t *amf_ue, ran_ue_t *ran_ue)
+{
+    ogs_assert(amf_ue);
+    ogs_assert(ran_ue);
+
+    amf_ue_deassociate_ran_ue(amf_ue, ran_ue);
+    ran_ue_remove(ran_ue);
+
+    /*
+     * If the UE has already been registered, keep the AMF UE context
+     * and let the mobile reachable timer handle implicit deregistration.
+     *
+     * If the UE is still in registration procedure, there is no valid
+     * registered NAS context to keep. Since no SMF transaction is created
+     * in this path, remove the AMF UE context immediately.
+     */
+    if (OGS_FSM_CHECK(&amf_ue->sm, gmm_state_registered)) {
+        ogs_timer_start(amf_ue->mobile_reachable.timer,
+                ogs_time_from_sec(amf_self()->time.t3512.value + 240));
+    } else {
+        amf_ue_remove(amf_ue);
     }
 }
 
@@ -646,10 +869,8 @@ void amf_sbi_send_deactivate_all_ue_in_gnb(amf_gnb_t *gnb, int state)
 
             new_xact_count = amf_sess_xact_count(amf_ue);
 
-            if (old_xact_count == new_xact_count) {
-                amf_ue_deassociate_ran_ue(amf_ue, ran_ue);
-                ran_ue_remove(ran_ue);
-            }
+            if (old_xact_count == new_xact_count)
+                amf_sbi_release_ran_ue_on_gnb_remove(amf_ue, ran_ue);
         } else {
             ogs_warn("amf_sbi_send_deactivate_all_ue_in_gnb()");
             ogs_warn("    RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] State[%d]",
@@ -659,6 +880,7 @@ void amf_sbi_send_deactivate_all_ue_in_gnb(amf_gnb_t *gnb, int state)
 
             if (state == AMF_REMOVE_S1_CONTEXT_BY_LO_CONNREFUSED ||
                 state == AMF_REMOVE_S1_CONTEXT_BY_RESET_ALL) {
+                amf_sbi_send_deactivate_stale_user_plane(ran_ue);
                 ran_ue_remove(ran_ue);
             } else {
                 /* At this point, it does not support other action */
@@ -677,7 +899,7 @@ void amf_sbi_send_release_session(
     ogs_assert(sess);
 
     r = amf_sess_sbi_discover_and_send(
-            OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, NULL,
+            OpenAPI_service_name_nsmf_pdusession, NULL,
             amf_nsmf_pdusession_build_release_sm_context,
             ran_ue, sess, state, data);
     ogs_expect(r == OGS_OK);
@@ -685,6 +907,63 @@ void amf_sbi_send_release_session(
 
     /* Prevent to invoke SMF for this session */
     CLEAR_SESSION_CONTEXT(sess);
+
+    /* With no SM Context left there is nothing to reconcile either */
+    if (sess->stale_ran_ue_id != OGS_INVALID_POOL_ID) {
+        ogs_debug("[%d] Stale user plane dropped with the SM context",
+                sess->psi);
+        sess->stale_ran_ue_id = OGS_INVALID_POOL_ID;
+    }
+}
+
+void amf_sbi_cancel_registration_session_release(amf_ue_t *amf_ue)
+{
+    amf_sess_t *sess = NULL;
+    ogs_sbi_xact_t *xact = NULL, *next_xact = NULL;
+
+    ogs_assert(amf_ue);
+
+    amf_ue->registration_session_release_after_authentication = false;
+    amf_ue->registration_session_release_pending = false;
+    ogs_list_for_each(&amf_ue->sess_list, sess) {
+        ogs_list_for_each_safe(&sess->sbi.xact_list, next_xact, xact) {
+            if (xact->state ==
+                    AMF_RELEASE_SM_CONTEXT_AUTHENTICATED_REGISTRATION)
+                ogs_sbi_xact_remove(xact);
+        }
+    }
+}
+
+void amf_sbi_fail_registration_session_release(
+        amf_ue_t *amf_ue, ran_ue_t *ran_ue, int status)
+{
+    int r;
+
+    ogs_assert(amf_ue);
+
+    if (!amf_ue->registration_session_release_pending ||
+            amf_ue->nas.message_type != OGS_NAS_5GS_REGISTRATION_REQUEST ||
+            !OGS_FSM_CHECK(&amf_ue->sm, gmm_state_initial_context_setup)) {
+        ogs_error("[%s] Ignore stale registration session release failure",
+                amf_ue->supi);
+        return;
+    }
+
+    amf_sbi_cancel_registration_session_release(amf_ue);
+    if (!ran_ue || !RAN_UE_IS_SERVING(amf_ue, ran_ue)) {
+        ogs_error("[%s] No serving NG context after registration session "
+                "release failure", amf_ue->supi);
+        return;
+    }
+
+    r = nas_5gs_send_gmm_reject_from_sbi(amf_ue, status);
+    ogs_expect(r == OGS_OK);
+    ogs_assert(r != OGS_ERROR);
+    r = ngap_send_ran_ue_context_release_command(ran_ue,
+            NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release,
+            NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
+    ogs_expect(r == OGS_OK);
+    ogs_assert(r != OGS_ERROR);
 }
 
 void amf_sbi_send_release_all_sessions(

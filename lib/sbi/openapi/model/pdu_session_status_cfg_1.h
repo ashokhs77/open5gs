@@ -8,22 +8,28 @@
 #define _OpenAPI_pdu_session_status_cfg_1_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_pdu_session_status_cfg_1_s OpenAPI_pdu_session_status_cfg_1_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_pdu_session_status_cfg_1_s OpenAPI_pdu_session_status_cfg_1_t;
-typedef struct OpenAPI_pdu_session_status_cfg_1_s {
+struct OpenAPI_pdu_session_status_cfg_1_s {
     char *dnn;
-} OpenAPI_pdu_session_status_cfg_1_t;
+    bool is_rat_type_required_null;
+    bool is_rat_type_required;
+    int rat_type_required;
+};
 
 OpenAPI_pdu_session_status_cfg_1_t *OpenAPI_pdu_session_status_cfg_1_create(
-    char *dnn
+    char *dnn,
+    bool is_rat_type_required_null,
+    bool is_rat_type_required,
+    int rat_type_required
 );
 void OpenAPI_pdu_session_status_cfg_1_free(OpenAPI_pdu_session_status_cfg_1_t *pdu_session_status_cfg_1);
 OpenAPI_pdu_session_status_cfg_1_t *OpenAPI_pdu_session_status_cfg_1_parseFromJSON(cJSON *pdu_session_status_cfg_1JSON);

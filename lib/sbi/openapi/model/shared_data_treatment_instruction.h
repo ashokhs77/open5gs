@@ -1,14 +1,14 @@
 /*
  * shared_data_treatment_instruction.h
  *
- * 
+ * Indicates the presence of this attribute in the individual data. Otherwise, the individual data takes precedence, by default. 
  */
 
 #ifndef _OpenAPI_shared_data_treatment_instruction_H_
 #define _OpenAPI_shared_data_treatment_instruction_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

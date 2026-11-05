@@ -1,27 +1,27 @@
 /*
  * app_descriptor.h
  *
- * 
+ * Contains an Application Descriptor
  */
 
 #ifndef _OpenAPI_app_descriptor_H_
 #define _OpenAPI_app_descriptor_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_app_descriptor_s OpenAPI_app_descriptor_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_app_descriptor_s OpenAPI_app_descriptor_t;
-typedef struct OpenAPI_app_descriptor_s {
+struct OpenAPI_app_descriptor_s {
     char *os_id;
     char *app_id;
-} OpenAPI_app_descriptor_t;
+};
 
 OpenAPI_app_descriptor_t *OpenAPI_app_descriptor_create(
     char *os_id,

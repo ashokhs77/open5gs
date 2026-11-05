@@ -1071,40 +1071,258 @@ static smf_ue_t *smf_ue_add(void)
     return smf_ue;
 }
 
-smf_ue_t *smf_ue_add_by_supi(char *supi)
+/*
+ * Set and index SUPI in one place.  Callers decide which smf_ue_t to
+ * use; this helper prevents a hash entry owned by another UE from being
+ * overwritten by ogs_hash_set().
+ */
+static int smf_ue_set_supi(smf_ue_t *smf_ue, const char *supi)
 {
-    smf_ue_t *smf_ue;
+    smf_ue_t *indexed_smf_ue = NULL;
 
-    ogs_assert(supi);
+    ogs_assert(smf_ue);
 
-    if ((smf_ue = smf_ue_add()) == NULL) {
-        ogs_error("smf_ue_add_by_supi() failed");
-        return NULL;
+    if (!supi) {
+        ogs_error("No SUPI");
+        return OGS_ERROR;
+    }
+    if (strlen(supi) == 0) {
+        ogs_error("Empty SUPI");
+        return OGS_ERROR;
+    }
+
+    if (smf_ue->supi) {
+        if (strcmp(smf_ue->supi, supi) != 0) {
+            ogs_fatal("SUPI mismatch [%s:%s]", smf_ue->supi, supi);
+            ogs_assert_if_reached();
+            return OGS_ERROR;
+        }
+        return OGS_OK;
+    }
+
+    indexed_smf_ue = smf_ue_find_by_supi((char *)supi);
+    if (indexed_smf_ue && indexed_smf_ue != smf_ue) {
+        ogs_fatal("SUPI[%s] already indexed", supi);
+        ogs_assert_if_reached();
+        return OGS_ERROR;
     }
 
     smf_ue->supi = ogs_strdup(supi);
     ogs_assert(smf_ue->supi);
-    ogs_hash_set(self.supi_hash, smf_ue->supi, strlen(smf_ue->supi), smf_ue);
+
+    ogs_hash_set(self.supi_hash,
+            smf_ue->supi, strlen(smf_ue->supi), smf_ue);
+
+    return OGS_OK;
+}
+
+/*
+ * Set and index IMSI in one place.  Convert first to a temporary buffer
+ * so an existing hash key is not modified before mismatch detection.
+ */
+static int smf_ue_set_imsi_bcd(smf_ue_t *smf_ue, const char *imsi_bcd)
+{
+    smf_ue_t *indexed_smf_ue = NULL;
+    uint8_t imsi[OGS_MAX_IMSI_LEN];
+    int imsi_len = 0;
+
+    ogs_assert(smf_ue);
+    ogs_assert(imsi_bcd);
+
+    if (ogs_imsi_bcd_is_valid(imsi_bcd) == false) {
+        ogs_error("ogs_imsi_bcd_is_valid() failed [%s]", imsi_bcd);
+        return OGS_ERROR;
+    }
+
+    memset(imsi, 0, sizeof(imsi));
+    ogs_bcd_to_buffer(imsi_bcd, imsi, &imsi_len);
+    ogs_assert(imsi_len > 0);
+    ogs_assert(imsi_len <= OGS_MAX_IMSI_LEN);
+
+    if (smf_ue->imsi_len) {
+        if (smf_ue->imsi_len != imsi_len ||
+            memcmp(smf_ue->imsi, imsi, imsi_len) != 0) {
+            ogs_fatal("IMSI mismatch [%s:%s]",
+                    smf_ue->imsi_bcd, imsi_bcd);
+            ogs_assert_if_reached();
+            return OGS_ERROR;
+        }
+        return OGS_OK;
+    }
+
+    indexed_smf_ue = smf_ue_find_by_imsi(imsi, imsi_len);
+    if (indexed_smf_ue && indexed_smf_ue != smf_ue) {
+        ogs_fatal("IMSI[%s] already indexed", imsi_bcd);
+        ogs_assert_if_reached();
+        return OGS_ERROR;
+    }
+
+    smf_ue->imsi_len = imsi_len;
+    memcpy(smf_ue->imsi, imsi, smf_ue->imsi_len);
+    ogs_cpystrn(smf_ue->imsi_bcd, imsi_bcd, OGS_MAX_IMSI_BCD_LEN+1);
+
+    ogs_hash_set(self.imsi_hash,
+            smf_ue->imsi, smf_ue->imsi_len, smf_ue);
+
+    return OGS_OK;
+}
+
+/*
+ * The EPC path receives raw BCD bytes.  Convert them to the canonical
+ * decimal IMSI string used by the SUPI path.
+ */
+static int smf_ue_set_imsi(smf_ue_t *smf_ue, uint8_t *imsi, int imsi_len)
+{
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+
+    ogs_assert(smf_ue);
+    ogs_assert(imsi);
+    ogs_assert(imsi_len);
+
+    if (imsi_len > OGS_MAX_IMSI_LEN) {
+        ogs_error("Invalid IMSI length [%d]", imsi_len);
+        return OGS_ERROR;
+    }
+
+    if (!ogs_buffer_to_bcd(imsi, imsi_len, imsi_bcd, sizeof(imsi_bcd))) {
+        ogs_error("Invalid IMSI [len:%d]", imsi_len);
+        return OGS_ERROR;
+    }
+
+    if (smf_ue_set_imsi_bcd(smf_ue, imsi_bcd) != OGS_OK) {
+        ogs_error("smf_ue_set_imsi_bcd() failed [%s]", imsi_bcd);
+        return OGS_ERROR;
+    }
+
+    return OGS_OK;
+}
+
+smf_ue_t *smf_ue_add_by_supi(char *supi)
+{
+    smf_ue_t *smf_ue = NULL;
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    uint8_t imsi[OGS_MAX_IMSI_LEN];
+    int imsi_len = 0;
+    bool created = false;
+    bool imsi_supi = false;
+
+    if (!supi) {
+        ogs_error("No SUPI");
+        return NULL;
+    }
+    if (strlen(supi) == 0) {
+        ogs_error("Empty SUPI");
+        return NULL;
+    }
+
+    memset(imsi_bcd, 0, sizeof(imsi_bcd));
+    memset(imsi, 0, sizeof(imsi));
+
+    if (ogs_supi_to_imsi_bcd(supi, imsi_bcd, &imsi_supi) != OGS_OK) {
+        ogs_error("ogs_supi_to_imsi_bcd() failed [%s]", supi);
+        return NULL;
+    }
+
+    /* First use the native SBI key. */
+    smf_ue = smf_ue_find_by_supi(supi);
+
+    /* If this is an IMSI SUPI, try the EPC IMSI key as an alias. */
+    if (!smf_ue && imsi_supi == true) {
+        ogs_bcd_to_buffer(imsi_bcd, imsi, &imsi_len);
+        smf_ue = smf_ue_find_by_imsi(imsi, imsi_len);
+    }
+
+    if (!smf_ue) {
+        smf_ue = smf_ue_add();
+        if (!smf_ue) {
+            ogs_error("smf_ue_add_by_supi() failed");
+            return NULL;
+        }
+        created = true;
+    }
+
+    if (smf_ue_set_supi(smf_ue, supi) != OGS_OK) {
+        ogs_error("smf_ue_set_supi() failed [%s]", supi);
+        goto error;
+    }
+
+    if (imsi_supi == true &&
+        smf_ue_set_imsi_bcd(smf_ue, imsi_bcd) != OGS_OK) {
+        ogs_error("smf_ue_set_imsi_bcd() failed [%s:%s]",
+                supi, imsi_bcd);
+        goto error;
+    }
 
     return smf_ue;
+
+error:
+    if (created == true)
+        smf_ue_remove(smf_ue);
+    return NULL;
 }
 
 smf_ue_t *smf_ue_add_by_imsi(uint8_t *imsi, int imsi_len)
 {
-    smf_ue_t *smf_ue;
+    smf_ue_t *smf_ue = NULL;
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    char *supi = NULL;
+    bool created = false;
 
     ogs_assert(imsi);
     ogs_assert(imsi_len);
 
-    if ((smf_ue = smf_ue_add()) == NULL)
-        return NULL;;
+    if (imsi_len > OGS_MAX_IMSI_LEN) {
+        ogs_error("Invalid IMSI length [%d]", imsi_len);
+        return NULL;
+    }
 
-    smf_ue->imsi_len = ogs_min(imsi_len, OGS_MAX_IMSI_LEN);
-    memcpy(smf_ue->imsi, imsi, smf_ue->imsi_len);
-    ogs_buffer_to_bcd(smf_ue->imsi, smf_ue->imsi_len, smf_ue->imsi_bcd);
-    ogs_hash_set(self.imsi_hash, smf_ue->imsi, smf_ue->imsi_len, smf_ue);
+    if (!ogs_buffer_to_bcd(imsi, imsi_len, imsi_bcd, sizeof(imsi_bcd))) {
+        ogs_error("Invalid IMSI [len:%d]", imsi_len);
+        return NULL;
+    }
+    if (ogs_imsi_bcd_is_valid(imsi_bcd) == false) {
+        ogs_error("ogs_imsi_bcd_is_valid() failed [%s]", imsi_bcd);
+        return NULL;
+    }
 
+    supi = ogs_msprintf("%s-%s", OGS_ID_SUPI_TYPE_IMSI, imsi_bcd);
+    ogs_assert(supi);
+
+    /* First use the native EPC key. */
+    smf_ue = smf_ue_find_by_imsi(imsi, imsi_len);
+
+    /* Then try the canonical IMSI SUPI used by the SBI path. */
+    if (!smf_ue)
+        smf_ue = smf_ue_find_by_supi(supi);
+
+    if (!smf_ue) {
+        smf_ue = smf_ue_add();
+        if (!smf_ue) {
+            ogs_error("smf_ue_add() failed");
+            goto error;
+        }
+        created = true;
+    }
+
+    if (smf_ue_set_imsi(smf_ue, imsi, imsi_len) != OGS_OK) {
+        ogs_error("smf_ue_set_imsi() failed [%s]", imsi_bcd);
+        goto error;
+    }
+
+    if (smf_ue_set_supi(smf_ue, supi) != OGS_OK) {
+        ogs_error("smf_ue_set_supi() failed [%s]", supi);
+        goto error;
+    }
+
+    ogs_free(supi);
     return smf_ue;
+
+error:
+    if (supi)
+        ogs_free(supi);
+    if (created == true)
+        smf_ue_remove(smf_ue);
+    return NULL;
 }
 
 void smf_ue_remove(smf_ue_t *smf_ue)
@@ -1144,8 +1362,20 @@ void smf_ue_remove_all(void)
 
 smf_ue_t *smf_ue_find_by_supi(char *supi)
 {
-    ogs_assert(supi);
-    return (smf_ue_t *)ogs_hash_get(self.supi_hash, supi, strlen(supi));
+    size_t supi_len;
+
+    if (!supi) {
+        ogs_error("No SUPI");
+        return NULL;
+    }
+
+    supi_len = strlen(supi);
+    if (supi_len == 0) {
+        ogs_error("Empty SUPI");
+        return NULL;
+    }
+
+    return (smf_ue_t *)ogs_hash_get(self.supi_hash, supi, supi_len);
 }
 
 smf_ue_t *smf_ue_find_by_imsi(uint8_t *imsi, int imsi_len)
@@ -1306,6 +1536,7 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
 
     ogs_list_add(&smf_ue->sess_list, sess);
 
+    smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_PFCP_SESSIONS_ACTIVE);
     stats_add_smf_session();
 
     return sess;
@@ -1321,6 +1552,18 @@ smf_sess_t *smf_sess_add_by_gtp1_message(ogs_gtp1_message_t *message)
 
     if (req->imsi.presence == 0) {
         ogs_error("No IMSI");
+        return NULL;
+    }
+
+    /* Validate the peer's IMSI before the hash lookup, whose key must be
+     * nonempty, and before removing any context selected by that key. */
+    if (req->imsi.len == 0 || req->imsi.len > OGS_MAX_IMSI_LEN) {
+        ogs_error("Invalid IMSI length [%u], expected [1..%d]",
+                req->imsi.len, OGS_MAX_IMSI_LEN);
+        return NULL;
+    }
+    if (!req->imsi.data) {
+        ogs_error("Missing IMSI data [len:%u]", req->imsi.len);
         return NULL;
     }
     if (req->tunnel_endpoint_identifier_data_i.presence == 0) {
@@ -1356,6 +1599,10 @@ smf_sess_t *smf_sess_add_by_gtp1_message(ogs_gtp1_message_t *message)
     }
     if (req->rat_type.presence == 0) {
         ogs_error("No RAT Type");
+        return NULL;
+    }
+    if (req->rat_type.u8 == 0) {
+        ogs_error("Invalid RAT Type [%d]", req->rat_type.u8);
         return NULL;
     }
 
@@ -1403,6 +1650,18 @@ smf_sess_t *smf_sess_add_by_gtp2_message(ogs_gtp2_message_t *message)
         ogs_error("No IMSI");
         return NULL;
     }
+
+    /* Validate the peer's IMSI before the hash lookup, whose key must be
+     * nonempty, and before removing any context selected by that key. */
+    if (req->imsi.len == 0 || req->imsi.len > OGS_MAX_IMSI_LEN) {
+        ogs_error("Invalid IMSI length [%u], expected [1..%d]",
+                req->imsi.len, OGS_MAX_IMSI_LEN);
+        return NULL;
+    }
+    if (!req->imsi.data) {
+        ogs_error("Missing IMSI data [len:%u]", req->imsi.len);
+        return NULL;
+    }
     if (req->access_point_name.presence == 0) {
         ogs_error("No APN");
         return NULL;
@@ -1415,6 +1674,10 @@ smf_sess_t *smf_sess_add_by_gtp2_message(ogs_gtp2_message_t *message)
     }
     if (req->rat_type.presence == 0) {
         ogs_error("No RAT Type");
+        return NULL;
+    }
+    if (req->rat_type.u8 == 0) {
+        ogs_error("Invalid RAT Type [%d]", req->rat_type.u8);
         return NULL;
     }
 
@@ -1551,15 +1814,20 @@ smf_sess_t *smf_sess_add_by_sm_context(ogs_sbi_message_t *message)
         ogs_error("No SUPI");
         return NULL;
     }
+    if (strlen(SmContextCreateData->supi) == 0) {
+        ogs_error("Empty SUPI");
+        return NULL;
+    }
 
     if (SmContextCreateData->is_pdu_session_id == false) {
         ogs_error("No PDU session identitiy");
         return NULL;
     }
 
-    if (SmContextCreateData->pdu_session_id ==
-            OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED) {
-        ogs_error("PDU session identity is unassigned");
+    if (ogs_pdu_session_id_is_valid(
+            SmContextCreateData->pdu_session_id) == false) {
+        ogs_error("Invalid PDU session identity [%d]",
+                SmContextCreateData->pdu_session_id);
         return NULL;
     }
 
@@ -1604,15 +1872,20 @@ smf_sess_t *smf_sess_add_by_pdu_session(ogs_sbi_message_t *message)
         ogs_error("No SUPI");
         return NULL;
     }
+    if (strlen(PduSessionCreateData->supi) == 0) {
+        ogs_error("Empty SUPI");
+        return NULL;
+    }
 
     if (PduSessionCreateData->is_pdu_session_id == false) {
         ogs_error("No PDU session identitiy");
         return NULL;
     }
 
-    if (PduSessionCreateData->pdu_session_id ==
-            OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED) {
-        ogs_error("PDU session identitiy is unassigned");
+    if (ogs_pdu_session_id_is_valid(
+            PduSessionCreateData->pdu_session_id) == false) {
+        ogs_error("Invalid PDU session identity [%d]",
+                PduSessionCreateData->pdu_session_id);
         return NULL;
     }
 
@@ -1864,6 +2137,13 @@ void smf_sess_remove(smf_sess_t *sess)
     if (sess->data_change_subscription.client)
         ogs_sbi_client_remove(sess->data_change_subscription.client);
 
+    if (sess->gx_sid)
+        ogs_free(sess->gx_sid);
+    if (sess->gy_sid)
+        ogs_free(sess->gy_sid);
+    if (sess->s6b_sid)
+        ogs_free(sess->s6b_sid);
+
     if (sess->session.name)
         ogs_free(sess->session.name);
     if (sess->full_dnn)
@@ -1908,6 +2188,8 @@ void smf_sess_remove(smf_sess_t *sess)
     /* H-SMF */
     if (sess->h_smf_uri)
         ogs_free(sess->h_smf_uri);
+    if (sess->h_smf_id)
+        ogs_free(sess->h_smf_id);
     if (sess->h_smf.client)
         ogs_sbi_client_remove(sess->h_smf.client);
     if (sess->vsmf_pdu_session_uri)
@@ -2392,44 +2674,25 @@ void smf_sess_create_indirect_data_forwarding(smf_sess_t *sess)
              * the same TEID.
              */
             if (ogs_list_first(&sess->bearer_list) == qos_flow) {
-                ogs_gtpu_resource_t *resource = NULL;
-
                 if (sess->handover.local_dl_addr)
                     ogs_freeaddrinfo(sess->handover.local_dl_addr);
                 if (sess->handover.local_dl_addr6)
                     ogs_freeaddrinfo(sess->handover.local_dl_addr6);
 
-                resource = ogs_pfcp_find_gtpu_resource(
-                        &sess->pfcp_node->gtpu_resource_list,
-                        sess->session.name, pdr->src_if);
-
-                if (resource) {
-                    ogs_user_plane_ip_resource_info_to_sockaddr(&resource->info,
+                ogs_assert(sess->pfcp_node->addr_list);
+                if (sess->pfcp_node->addr_list->ogs_sa_family == AF_INET)
+                    ogs_assert(OGS_OK == ogs_copyaddrinfo(
                         &sess->handover.local_dl_addr,
-                        &sess->handover.local_dl_addr6);
-                    if (resource->info.teidri)
-                        sess->handover.local_dl_teid =
-                            OGS_PFCP_GTPU_INDEX_TO_TEID(
-                                pdr->teid, resource->info.teidri,
-                                resource->info.teid_range);
-                    else
-                        sess->handover.local_dl_teid = pdr->teid;
-                } else {
-                    ogs_assert(sess->pfcp_node->addr_list);
-                    if (sess->pfcp_node->addr_list->ogs_sa_family == AF_INET)
-                        ogs_assert(OGS_OK == ogs_copyaddrinfo(
-                            &sess->handover.local_dl_addr,
-                            sess->pfcp_node->addr_list));
-                    else if (sess->pfcp_node->addr_list->ogs_sa_family ==
-                            AF_INET6)
-                        ogs_assert(OGS_OK == ogs_copyaddrinfo(
-                            &sess->handover.local_dl_addr6,
-                            sess->pfcp_node->addr_list));
-                    else
-                        ogs_assert_if_reached();
+                        sess->pfcp_node->addr_list));
+                else if (sess->pfcp_node->addr_list->ogs_sa_family ==
+                        AF_INET6)
+                    ogs_assert(OGS_OK == ogs_copyaddrinfo(
+                        &sess->handover.local_dl_addr6,
+                        sess->pfcp_node->addr_list));
+                else
+                    ogs_assert_if_reached();
 
-                    sess->handover.local_dl_teid = pdr->teid;
-                }
+                sess->handover.local_dl_teid = pdr->teid;
             }
 
             ogs_assert(OGS_OK ==
@@ -2478,6 +2741,11 @@ void smf_sess_delete_indirect_data_forwarding(smf_sess_t *sess)
 
     ogs_assert(sess);
 
+    /*
+     * Indirect tunnel PDR/FARs are only identified by ACCESS -> ACCESS,
+     * so this deletes whichever tunnel the session holds now.
+     * A session holds one tunnel at a time.
+     */
     ogs_list_for_each(&sess->pfcp.pdr_list, pdr) {
         ogs_pfcp_far_t *far = pdr->far;
 
@@ -2543,7 +2811,7 @@ void smf_sess_create_cp_up_data_forwarding(smf_sess_t *sess)
     ogs_assert(qos_flow);
     ogs_assert(ogs_list_next(qos_flow) == NULL);
 
-    /* We'll use the DL-FAR for CP2UP-FAR */
+    /* Share the default QoS flow/EPS bearer's DL FAR with CP2UP. */
     cp2up_far = qos_flow->dl_far;
     ogs_assert(cp2up_far);
     ogs_pfcp_pdr_associate_far(cp2up_pdr, cp2up_far);
@@ -2565,21 +2833,25 @@ void smf_sess_create_cp_up_data_forwarding(smf_sess_t *sess)
 
 #if 0
     /*
-     * MODIFIED the PDI matching for UP2CP
-     * to not distinguish the QoS Flow Identifier.
-     *
-     * When omitted, the UPF was also adjusted to not compare the QFI.
+     * UP2CP (RS): keep QFI matching disabled. The F-TEID and SDF filter
+     * still apply, but RS forwarding is not restricted to one QoS flow.
      */
-    if (qos_flow->qer && qos_flow->qfi) {
-        /* To match the PDI of UP2CP_PDR(from ff02::2/128 to assigned)
-         * Router-Solicitation has QFI in the Extended Header */
+    if (qos_flow->qer && qos_flow->qfi)
         up2cp_pdr->qfi = qos_flow->qfi;
-
-        /* When UPF sends router advertisement to gNB,
-         * it includes QFI in extension header */
-        ogs_pfcp_pdr_associate_qer(cp2up_pdr, qos_flow->qer);
-    }
 #endif
+
+    /*
+     * CP2UP (RA): in 5GC, use the default QoS flow's QER to add the
+     * DL PDU Session Container and QFI on N3 (TS 29.281, 5.2.2.7;
+     * TS 38.415, 5.5.2.1). This is output marking, not PDI matching;
+     * leave cp2up_pdr->qfi unset because SMF-to-UPF RAs have no QFI.
+     *
+     * EPC may also have a QER for bitrate control, but has no 5GS QFI.
+     * The guard below therefore leaves EPC RA forwarding unchanged,
+     * without adding a PDU Session Container.
+     */
+    if (qos_flow->qer && qos_flow->qfi)
+        ogs_pfcp_pdr_associate_qer(cp2up_pdr, qos_flow->qer);
 }
 
 void smf_sess_delete_cp_up_data_forwarding(smf_sess_t *sess)
@@ -3097,6 +3369,31 @@ static const uint8_t *ipcp_contains_option(
 #include "../version.h"
 static const char *pap_welcome = "Welcome to open5gs-smfd " OPEN5GS_VERSION;
 
+/*
+ * One request container can yield more than one response container
+ * (e.g. DNS server request -> primary + secondary), so the container cap
+ * that ogs_pco_parse() applies to the request does not bound the response.
+ */
+static bool smf_pco_id_add(
+        ogs_pco_t *pco, uint16_t id, uint8_t len, void *data)
+{
+    ogs_assert(pco);
+
+    if (pco->num_of_id >= OGS_MAX_NUM_OF_PROTOCOL_OR_CONTAINER_ID) {
+        ogs_error("PCO/EPCO response exceeds maximum number of containers "
+                "[id:0x%x max:%d]",
+                id, OGS_MAX_NUM_OF_PROTOCOL_OR_CONTAINER_ID);
+        return false;
+    }
+
+    pco->ids[pco->num_of_id].id = id;
+    pco->ids[pco->num_of_id].len = len;
+    pco->ids[pco->num_of_id].data = data;
+    pco->num_of_id++;
+
+    return true;
+}
+
 int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
 {
     int rv;
@@ -3135,6 +3432,10 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
         uint8_t *data = ue.ids[i].data;
         switch(ue.ids[i].id) {
         case OGS_PCO_ID_PASSWORD_AUTHENTICATION_PROTOCOL:
+            if (ue.ids[i].len < 2) {
+                ogs_error("Ignoring PAP container [len:%d]", ue.ids[i].len);
+                break;
+            }
             if (data[0] == 1) { /* Code : Authenticate-Request */
                 memset(&pco_pap, 0, sizeof(ogs_pco_pap_t));
 
@@ -3150,13 +3451,15 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
                 pco_pap.identifier = data[1]; /* Identifier */
                 pco_pap.len = htobe16(pco_size);
 
-                smf.ids[smf.num_of_id].id = ue.ids[i].id;
-                smf.ids[smf.num_of_id].len = pco_size;
-                smf.ids[smf.num_of_id].data = (uint8_t *)&pco_pap;
-                smf.num_of_id++;
+                smf_pco_id_add(&smf, ue.ids[i].id,
+                        pco_size, (uint8_t *)&pco_pap);
             }
             break;
         case OGS_PCO_ID_CHALLENGE_HANDSHAKE_AUTHENTICATION_PROTOCOL:
+            if (ue.ids[i].len < 2) {
+                ogs_error("Ignoring CHAP container [len:%d]", ue.ids[i].len);
+                break;
+            }
             if (data[0] == 2) { /* Code : Response */
                 memset(&pco_chap, 0, sizeof(ogs_pco_chap_t));
                 pco_size = 4; /* sizeof(code+identifier+len) */
@@ -3165,13 +3468,15 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
                 pco_chap.identifier = data[1]; /* Identifier */
                 pco_chap.len = htobe16(pco_size);
 
-                smf.ids[smf.num_of_id].id = ue.ids[i].id;
-                smf.ids[smf.num_of_id].len = pco_size;
-                smf.ids[smf.num_of_id].data = (uint8_t *)&pco_chap;
-                smf.num_of_id++;
+                smf_pco_id_add(&smf, ue.ids[i].id,
+                        pco_size, (uint8_t *)&pco_chap);
             }
             break;
         case OGS_PCO_ID_INTERNET_PROTOCOL_CONTROL_PROTOCOL:
+            if (ue.ids[i].len < 4) {
+                ogs_error("Ignoring IPCP container [len:%d]", ue.ids[i].len);
+                break;
+            }
             if (data[0] == 1) { /* Code : Configuration Request */
                 ogs_pco_ipcp_t *ipcp = (ogs_pco_ipcp_t *)data;
                 uint16_t in_len = 0;
@@ -3183,7 +3488,20 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
                 ogs_assert(ipcp);
                 in_len = be16toh(ipcp->len);
 
-                ogs_assert(num_of_ipcp <= OGS_PCO_MAX_NUM_OF_IPCP);
+                /* The IPCP packet length is attacker-controlled; keep the
+                 * option scan below within the enclosing container. */
+                if (in_len < 4 || in_len > ue.ids[i].len) {
+                    ogs_error("Ignoring IPCP container "
+                            "[packet:%d container:%d]", in_len, ue.ids[i].len);
+                    break;
+                }
+
+                if (num_of_ipcp >= OGS_PCO_MAX_NUM_OF_IPCP) {
+                    ogs_error("Ignoring IPCP container [max:%d]",
+                            OGS_PCO_MAX_NUM_OF_IPCP);
+                    break;
+                }
+
                 pco_ipcp[num_of_ipcp].code = 2; /* Code : Configuration Ack */
                 pco_ipcp[num_of_ipcp].identifier = ipcp->identifier; /* ID: Needs to match request */
 
@@ -3228,13 +3546,9 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
 
                 pco_ipcp[num_of_ipcp].len = htobe16(out_len);
 
-                smf.ids[smf.num_of_id].id = ue.ids[i].id;
-                smf.ids[smf.num_of_id].len = out_len;
-                smf.ids[smf.num_of_id].data = (uint8_t *)&pco_ipcp[num_of_ipcp];
-
-                num_of_ipcp++;
-
-                smf.num_of_id++;
+                if (smf_pco_id_add(&smf, ue.ids[i].id, out_len,
+                            (uint8_t *)&pco_ipcp[num_of_ipcp]))
+                    num_of_ipcp++;
             }
             break;
         case OGS_PCO_ID_DNS_SERVER_IPV4_ADDRESS_REQUEST:
@@ -3242,20 +3556,16 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
                 rv = ogs_ipsubnet(
                         &dns_primary, smf_self()->dns[0], NULL);
                 ogs_assert(rv == OGS_OK);
-                smf.ids[smf.num_of_id].id = ue.ids[i].id;
-                smf.ids[smf.num_of_id].len = OGS_IPV4_LEN;
-                smf.ids[smf.num_of_id].data = dns_primary.sub;
-                smf.num_of_id++;
+                smf_pco_id_add(&smf, ue.ids[i].id,
+                        OGS_IPV4_LEN, dns_primary.sub);
             }
 
             if (smf_self()->dns[1]) {
                 rv = ogs_ipsubnet(
                         &dns_secondary, smf_self()->dns[1], NULL);
                 ogs_assert(rv == OGS_OK);
-                smf.ids[smf.num_of_id].id = ue.ids[i].id;
-                smf.ids[smf.num_of_id].len = OGS_IPV4_LEN;
-                smf.ids[smf.num_of_id].data = dns_secondary.sub;
-                smf.num_of_id++;
+                smf_pco_id_add(&smf, ue.ids[i].id,
+                        OGS_IPV4_LEN, dns_secondary.sub);
             }
             break;
         case OGS_PCO_ID_DNS_SERVER_IPV6_ADDRESS_REQUEST:
@@ -3263,20 +3573,16 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
                 rv = ogs_ipsubnet(
                         &dns6_primary, smf_self()->dns6[0], NULL);
                 ogs_assert(rv == OGS_OK);
-                smf.ids[smf.num_of_id].id = ue.ids[i].id;
-                smf.ids[smf.num_of_id].len = OGS_IPV6_LEN;
-                smf.ids[smf.num_of_id].data = dns6_primary.sub;
-                smf.num_of_id++;
+                smf_pco_id_add(&smf, ue.ids[i].id,
+                        OGS_IPV6_LEN, dns6_primary.sub);
             }
 
             if (smf_self()->dns6[1]) {
                 rv = ogs_ipsubnet(
                         &dns6_secondary, smf_self()->dns6[1], NULL);
                 ogs_assert(rv == OGS_OK);
-                smf.ids[smf.num_of_id].id = ue.ids[i].id;
-                smf.ids[smf.num_of_id].len = OGS_IPV6_LEN;
-                smf.ids[smf.num_of_id].data = dns6_secondary.sub;
-                smf.num_of_id++;
+                smf_pco_id_add(&smf, ue.ids[i].id,
+                        OGS_IPV6_LEN, dns6_secondary.sub);
             }
             break;
         case OGS_PCO_ID_P_CSCF_IPV4_ADDRESS_REQUEST:
@@ -3284,13 +3590,11 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
                 rv = ogs_ipsubnet(&p_cscf,
                     smf_self()->p_cscf[smf_self()->p_cscf_index], NULL);
                 ogs_assert(rv == OGS_OK);
-                smf.ids[smf.num_of_id].id = ue.ids[i].id;
-                smf.ids[smf.num_of_id].len = OGS_IPV4_LEN;
-                smf.ids[smf.num_of_id].data = p_cscf.sub;
-                smf.num_of_id++;
-
-                smf_self()->p_cscf_index++;
-                smf_self()->p_cscf_index %= smf_self()->num_of_p_cscf;
+                if (smf_pco_id_add(&smf, ue.ids[i].id,
+                            OGS_IPV4_LEN, p_cscf.sub)) {
+                    smf_self()->p_cscf_index++;
+                    smf_self()->p_cscf_index %= smf_self()->num_of_p_cscf;
+                }
             }
             break;
         case OGS_PCO_ID_P_CSCF_IPV6_ADDRESS_REQUEST:
@@ -3298,22 +3602,17 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
                 rv = ogs_ipsubnet(&p_cscf6,
                     smf_self()->p_cscf6[smf_self()->p_cscf6_index], NULL);
                 ogs_assert(rv == OGS_OK);
-                smf.ids[smf.num_of_id].id = ue.ids[i].id;
-                smf.ids[smf.num_of_id].len = OGS_IPV6_LEN;
-                smf.ids[smf.num_of_id].data = p_cscf6.sub;
-                smf.num_of_id++;
-
-                smf_self()->p_cscf6_index++;
-                smf_self()->p_cscf6_index %= smf_self()->num_of_p_cscf6;
+                if (smf_pco_id_add(&smf, ue.ids[i].id,
+                            OGS_IPV6_LEN, p_cscf6.sub)) {
+                    smf_self()->p_cscf6_index++;
+                    smf_self()->p_cscf6_index %= smf_self()->num_of_p_cscf6;
+                }
             }
             break;
         case OGS_PCO_ID_IPV4_LINK_MTU_REQUEST:
             if (smf_self()->mtu) {
                 mtu = htobe16(smf_self()->mtu);
-                smf.ids[smf.num_of_id].id = ue.ids[i].id;
-                smf.ids[smf.num_of_id].len = sizeof(uint16_t);
-                smf.ids[smf.num_of_id].data = &mtu;
-                smf.num_of_id++;
+                smf_pco_id_add(&smf, ue.ids[i].id, sizeof(uint16_t), &mtu);
             }
             break;
         case OGS_PCO_ID_IP_ADDRESS_ALLOCATION_VIA_NAS_SIGNALLING:
@@ -3323,10 +3622,7 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
             /* TODO */
             break;
         case OGS_PCO_ID_MS_SUPPORT_LOCAL_ADDR_TFT_INDICATOR:
-            smf.ids[smf.num_of_id].id = ue.ids[i].id;
-            smf.ids[smf.num_of_id].len = 0;
-            smf.ids[smf.num_of_id].data = 0;
-            smf.num_of_id++;
+            smf_pco_id_add(&smf, ue.ids[i].id, 0, NULL);
             break;
         case OGS_PCO_ID_P_CSCF_RE_SELECTION_SUPPORT:
             /* TODO */

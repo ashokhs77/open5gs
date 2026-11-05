@@ -8,10 +8,11 @@
 #define _OpenAPI_mbs_session_id_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_mbs_session_id_s OpenAPI_mbs_session_id_t;
 #include "ssm.h"
 #include "tmgi.h"
 
@@ -19,12 +20,11 @@
 extern "C" {
 #endif
 
-typedef struct OpenAPI_mbs_session_id_s OpenAPI_mbs_session_id_t;
-typedef struct OpenAPI_mbs_session_id_s {
+struct OpenAPI_mbs_session_id_s {
     struct OpenAPI_tmgi_s *tmgi;
     struct OpenAPI_ssm_s *ssm;
     char *nid;
-} OpenAPI_mbs_session_id_t;
+};
 
 OpenAPI_mbs_session_id_t *OpenAPI_mbs_session_id_create(
     OpenAPI_tmgi_t *tmgi,

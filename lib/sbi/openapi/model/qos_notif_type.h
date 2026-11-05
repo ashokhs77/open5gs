@@ -8,7 +8,7 @@
 #define _OpenAPI_qos_notif_type_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-typedef enum { OpenAPI_qos_notif_type_NULL = 0, OpenAPI_qos_notif_type_GUARANTEED, OpenAPI_qos_notif_type_NOT_GUARANTEED } OpenAPI_qos_notif_type_e;
+typedef enum { OpenAPI_qos_notif_type_NULL = 0, OpenAPI_qos_notif_type_GUARANTEED, OpenAPI_qos_notif_type_NOT_GUARANTEED, OpenAPI_qos_notif_type_NOT_GUARANTEED_DL, OpenAPI_qos_notif_type_NOT_GUARANTEED_UL } OpenAPI_qos_notif_type_e;
 
 char* OpenAPI_qos_notif_type_ToString(OpenAPI_qos_notif_type_e qos_notif_type);
 

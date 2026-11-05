@@ -1,14 +1,14 @@
 /*
  * condition_event_type.h
  *
- * 
+ * Indicates whether a notification is due to the NF Instance to start or stop being part of a condition for a subscription to a set of NFs 
  */
 
 #ifndef _OpenAPI_condition_event_type_H_
 #define _OpenAPI_condition_event_type_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

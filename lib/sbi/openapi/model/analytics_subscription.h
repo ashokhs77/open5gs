@@ -8,22 +8,22 @@
 #define _OpenAPI_analytics_subscription_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_analytics_subscription_s OpenAPI_analytics_subscription_t;
 #include "nwdaf_subscription.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_analytics_subscription_s OpenAPI_analytics_subscription_t;
-typedef struct OpenAPI_analytics_subscription_s {
+struct OpenAPI_analytics_subscription_s {
     char *nwdaf_id;
     char *nwdaf_set_id;
     OpenAPI_list_t *nwdaf_subscription_list;
-} OpenAPI_analytics_subscription_t;
+};
 
 OpenAPI_analytics_subscription_t *OpenAPI_analytics_subscription_create(
     char *nwdaf_id,

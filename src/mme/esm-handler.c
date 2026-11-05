@@ -28,6 +28,48 @@
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __esm_log_domain
 
+/*
+ * Check whether the PDN Type requested by the UE is compatible with
+ * the PDN Type provided by the subscription (HSS).
+ *
+ * This check MUST be performed before building Create Session Request;
+ * mme_s11_build_create_session_request() asserts on an incompatible
+ * PDN Type, so an unchecked UE request would crash the MME.
+ *
+ * Returns 0 if compatible, otherwise the ESM cause to be used
+ * in PDN CONNECTIVITY REJECT.
+ */
+static ogs_nas_esm_cause_t esm_check_pdn_type(mme_sess_t *sess)
+{
+    uint8_t derived_pdn_type;
+
+    ogs_assert(sess);
+    ogs_assert(sess->session);
+
+    if (sess->session->session_type != OGS_PDU_SESSION_TYPE_IPV4 &&
+        sess->session->session_type != OGS_PDU_SESSION_TYPE_IPV6 &&
+        sess->session->session_type != OGS_PDU_SESSION_TYPE_IPV4V6) {
+        /* Subscription data is broken - this is not UE input */
+        ogs_fatal("Invalid PDN_TYPE[%d]", sess->session->session_type);
+        ogs_assert_if_reached();
+    }
+
+    derived_pdn_type =
+        (sess->session->session_type & sess->ue_request_type.type);
+    if (derived_pdn_type == 0) {
+        ogs_error("Incompatible PDN Type [UE:%d,HSS:%d]",
+                sess->ue_request_type.type, sess->session->session_type);
+        if (sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4)
+            return OGS_NAS_ESM_CAUSE_PDN_TYPE_IPV4_ONLY_ALLOWED;
+        else if (sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV6)
+            return OGS_NAS_ESM_CAUSE_PDN_TYPE_IPV6_ONLY_ALLOWED;
+        else
+            return OGS_NAS_ESM_CAUSE_REQUESTED_SERVICE_OPTION_NOT_SUBSCRIBED;
+    }
+
+    return 0;
+}
+
 int esm_handle_pdn_connectivity_request(
         enb_ue_t *enb_ue, mme_bearer_t *bearer,
         ogs_nas_eps_pdn_connectivity_request_t *req,
@@ -36,6 +78,7 @@ int esm_handle_pdn_connectivity_request(
     int r;
     mme_ue_t *mme_ue = NULL;
     mme_sess_t *sess = NULL;
+    ogs_nas_esm_cause_t esm_cause;
     uint8_t security_protected_required = 0;
     const char *emergency_dnn = mme_self()->emergency.dnn;
     bool emergency;
@@ -91,7 +134,7 @@ int esm_handle_pdn_connectivity_request(
         OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST_ESM_INFORMATION_TRANSFER_FLAG_PRESENT) {
         ogs_nas_esm_information_transfer_flag_t *esm_information_transfer_flag =
             &req->esm_information_transfer_flag;
-        security_protected_required = 
+        security_protected_required =
                 esm_information_transfer_flag->security_protected_required;
         ogs_debug("    EIT(ESM information transfer)[%d]",
                 security_protected_required);
@@ -117,7 +160,7 @@ int esm_handle_pdn_connectivity_request(
         } else {
             apn = req->access_point_name.apn;
         }
-        sess->session = mme_session_find_by_apn(mme_ue, apn);
+        mme_sess_set_session(sess, mme_session_find_by_apn(mme_ue, apn));
         if (!sess->session) {
             /* Invalid APN */
             r = nas_eps_send_pdn_connectivity_reject(
@@ -127,26 +170,6 @@ int esm_handle_pdn_connectivity_request(
             ogs_assert(r != OGS_ERROR);
             ogs_warn("Invalid APN[%s]", apn);
             return OGS_ERROR;
-        }
-
-        if (sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
-            sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
-            sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-            uint8_t derived_pdn_type =
-                (sess->session->session_type & sess->ue_request_type.type);
-            if (derived_pdn_type == 0) {
-                ogs_error("Cannot derived PDN Type [UE:%d,HSS:%d]",
-                    sess->ue_request_type.type, sess->session->session_type);
-                r = nas_eps_send_pdn_connectivity_reject(
-                        sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE,
-                        create_action);
-                ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
-                return OGS_ERROR;
-            }
-        } else {
-            ogs_fatal("Invalid PDN_TYPE[%d]", sess->session->session_type);
-            ogs_assert_if_reached();
         }
     }
 
@@ -168,6 +191,17 @@ int esm_handle_pdn_connectivity_request(
     }
 
     if (security_protected_required) {
+        if (sess->session) {
+            esm_cause = esm_check_pdn_type(sess);
+            if (esm_cause) {
+                r = nas_eps_send_pdn_connectivity_reject(
+                        sess, esm_cause, create_action);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+                return OGS_ERROR;
+            }
+        }
+
         CLEAR_BEARER_TIMER(bearer->t3489);
         r = nas_eps_send_esm_information_request(bearer);
         ogs_expect(r == OGS_OK);
@@ -178,7 +212,7 @@ int esm_handle_pdn_connectivity_request(
 
     if (!sess->session) {
         /* Default APN */
-        sess->session = mme_default_session(mme_ue);
+        mme_sess_set_session(sess, mme_default_session(mme_ue));
     }
 
     if (sess->session) {
@@ -187,6 +221,22 @@ int esm_handle_pdn_connectivity_request(
 
         ogs_assert(sess->session->name);
         ogs_debug("    APN[%s]", sess->session->name);
+
+        /*
+         * The PDN Type of the Default APN has not been validated
+         * against the UE requested PDN Type. Check it here before
+         * building Create Session Request; otherwise an incompatible
+         * combination would hit the assert in
+         * mme_s11_build_create_session_request() and crash the MME.
+         */
+        esm_cause = esm_check_pdn_type(sess);
+        if (esm_cause) {
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, esm_cause, create_action);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+            return OGS_ERROR;
+        }
 
         default_bearer = mme_default_bearer_in_sess(sess);
         if (default_bearer) {
@@ -222,6 +272,7 @@ int esm_handle_information_response(
 {
     int r;
     mme_ue_t *mme_ue = NULL;
+    ogs_nas_esm_cause_t esm_cause;
 
     ogs_assert(rsp);
 
@@ -237,8 +288,8 @@ int esm_handle_information_response(
 
     if (rsp->presencemask &
             OGS_NAS_EPS_ESM_INFORMATION_RESPONSE_ACCESS_POINT_NAME_PRESENT) {
-        sess->session = mme_session_find_by_apn(
-                            mme_ue, rsp->access_point_name.apn);
+        mme_sess_set_session(sess, mme_session_find_by_apn(
+                            mme_ue, rsp->access_point_name.apn));
     }
 
     if (rsp->presencemask &
@@ -261,24 +312,13 @@ int esm_handle_information_response(
         ogs_assert(sess->session->name);
         ogs_debug("    APN[%s]", sess->session->name);
 
-        if (sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
-            sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
-            sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-            uint8_t derived_pdn_type =
-                (sess->session->session_type & sess->ue_request_type.type);
-            if (derived_pdn_type == 0) {
-                ogs_error("Cannot derived PDN Type [UE:%d,HSS:%d]",
-                    sess->ue_request_type.type, sess->session->session_type);
-                r = nas_eps_send_pdn_connectivity_reject(
-                        sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE,
-                        OGS_GTP_CREATE_IN_ATTACH_REQUEST);
-                ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
-                return OGS_ERROR;
-            }
-        } else {
-            ogs_fatal("Invalid PDN_TYPE[%d]", sess->session->session_type);
-            ogs_assert_if_reached();
+        esm_cause = esm_check_pdn_type(sess);
+        if (esm_cause) {
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, esm_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+            return OGS_ERROR;
         }
 
         if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue)) {
@@ -294,20 +334,20 @@ int esm_handle_information_response(
                 ogs_expect(r == OGS_OK);
              if (r == OGS_ERROR)
                 {
-                    ogs_error("asking to create new session: no.of session available[%d], csmap [%p], IMSI [%s], attach value [%d] attach mode [%d], PDN_session_type [%d]", 
-                        mme_ue->num_of_session, mme_ue->csmap, 
+                    ogs_error("asking to create new session: no.of session available[%d], csmap [%p], IMSI [%s], attach value [%d] attach mode [%d], PDN_session_type [%d]",
+                        mme_ue->num_of_session, mme_ue->csmap,
                         mme_ue->imsi_bcd, mme_ue->nas_eps.attach.value, mme_ue->network_access_mode, sess->session->session_type);
-                    
+
                    if (mme_ue->num_of_session >= OGS_MAX_NUM_OF_SESS) {
                         // stale PDN session for the given APN is being removed and decrement the num of sessions
-                        mme_session_remove_by_apn(mme_ue, rsp->access_point_name.apn);  
+                        mme_session_remove_by_apn(mme_ue, rsp->access_point_name.apn);
                     }
                     sess->session = mme_session_add_allow_duplicate_apn(mme_ue, rsp->access_point_name.apn, sess->session->session_type); //this function is using for adding the duplicate apn
                     if (!sess->session) {
                         ogs_error("Failed to add session for APN [%s]", rsp->access_point_name.apn);
                     }
                     ogs_info("removed all pdn's and created new pdn's :no.of session available[%d], csmap [%p], IMSI [%s], attach value [%d] attach mode [%d], PDN_session_type [%d]",
-                        mme_ue->num_of_session, mme_ue->csmap, 
+                        mme_ue->num_of_session, mme_ue->csmap,
                         mme_ue->imsi_bcd, mme_ue->nas_eps.attach.value, mme_ue->network_access_mode, sess->session->session_type);
                   // ogs_assert(r != OGS_ERROR);
                 }

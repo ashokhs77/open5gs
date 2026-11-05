@@ -8,21 +8,21 @@
 #define _OpenAPI_mbs_binding_resp_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_mbs_binding_resp_s OpenAPI_mbs_binding_resp_t;
 #include "ip_end_point.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_mbs_binding_resp_s OpenAPI_mbs_binding_resp_t;
-typedef struct OpenAPI_mbs_binding_resp_s {
+struct OpenAPI_mbs_binding_resp_s {
     char *pcf_fqdn;
     OpenAPI_list_t *pcf_ip_end_points;
-} OpenAPI_mbs_binding_resp_t;
+};
 
 OpenAPI_mbs_binding_resp_t *OpenAPI_mbs_binding_resp_create(
     char *pcf_fqdn,

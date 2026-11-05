@@ -17,8 +17,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <mongoc.h>
-
 #include "ogs-dbi.h"
 
 int __ogs_dbi_domain;
@@ -171,6 +169,10 @@ int ogs_dbi_init(const char *db_uri)
         self.collection.subscriber = mongoc_client_get_collection(
             ogs_mongoc()->client, ogs_mongoc()->name, "subscribers");
         ogs_assert(self.collection.subscriber);
+
+        self.collection.eir = mongoc_client_get_collection(
+            ogs_mongoc()->client, ogs_mongoc()->name, "eir");
+        ogs_assert(self.collection.eir);
     }
 
     return OGS_OK;
@@ -180,6 +182,9 @@ void ogs_dbi_final(void)
 {
     if (self.collection.subscriber) {
         mongoc_collection_destroy(self.collection.subscriber);
+    }
+    if (self.collection.eir) {
+        mongoc_collection_destroy(self.collection.eir);
     }
 
 #if MONGOC_CHECK_VERSION(1, 9, 0)

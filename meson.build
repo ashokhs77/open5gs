@@ -16,7 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 project('open5gs', 'c', 'cpp',
-    version : '2.7.7',
+    version : '2.8.0',
     license : 'AGPL-3.0-or-later',
     meson_version : '>= 0.43.0',
     default_options : [
@@ -25,7 +25,7 @@ project('open5gs', 'c', 'cpp',
     ],
 )
 
-libogslib_version = '2.7.7'
+libogslib_version = '2.8.0'
 
 prefix = get_option('prefix')
 bindir = join_paths(prefix, get_option('bindir'))
@@ -120,6 +120,14 @@ endif
 add_project_arguments(
     cc.get_supported_arguments(possible_cc_flags),
     language : 'c')
+
+# Apple's linker reports duplicate transitive libraries used by several targets.
+# Suppress the diagnostic only when the linker supports the option.
+if host_system == 'darwin' and meson.version().version_compare('>=0.46.0')
+    add_project_link_arguments(
+        cc.get_supported_link_arguments('-Wl,-no_warn_duplicate_libraries'),
+        language : ['c', 'cpp'])
+endif
 
 subdir('configs')
 subdir('lib')

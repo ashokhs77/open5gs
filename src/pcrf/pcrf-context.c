@@ -59,8 +59,14 @@ void pcrf_context_init(void)
 
 void pcrf_context_final(void)
 {
+    ogs_hash_index_t *hi = NULL;
+
     ogs_assert(context_initialized == 1);
     ogs_assert(self.ip_hash);
+
+    /* Values are ours; ogs_hash_destroy() releases the keys. */
+    for (hi = ogs_hash_first(self.ip_hash); hi; hi = ogs_hash_next(hi))
+        ogs_free(ogs_hash_this_val(hi));
     ogs_hash_destroy(self.ip_hash);
     ogs_thread_mutex_destroy(&self.hash_lock);
 
@@ -420,6 +426,31 @@ int pcrf_db_qos_data(
                     imsi_bcd, apn);
     }
 
+    /*
+     * Framed routes are only available from MongoDB. policy.yaml
+     * (ogs_app_config_session_data() above) is matched by supi_range and
+     * cannot hold per-subscriber routes, so nothing is logged here in the
+     * DB-less case. See OGS_STORE_SESSION_DATA in lib/proto/types.h.
+     */
+    if (rv == OGS_OK) {
+        for (i = 0; i < OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI; i++) {
+            if (!session_data->session.ipv4_framed_routes ||
+                !session_data->session.ipv4_framed_routes[i])
+                break;
+            ogs_info("DB IPv4 framed route IMSI[%s] APN[%s]: %s",
+                    imsi_bcd, apn,
+                    session_data->session.ipv4_framed_routes[i]);
+        }
+        for (i = 0; i < OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI; i++) {
+            if (!session_data->session.ipv6_framed_routes ||
+                !session_data->session.ipv6_framed_routes[i])
+                break;
+            ogs_info("DB IPv6 framed route IMSI[%s] APN[%s]: %s",
+                    imsi_bcd, apn,
+                    session_data->session.ipv6_framed_routes[i]);
+        }
+    }
+
     /* For EPC, we need to inialize Flow-Status in Pcc-Rule */
     for (i = 0; i < session_data->num_of_pcc_rule; i++) {
         ogs_pcc_rule_t *pcc_rule = &session_data->pcc_rule[i];
@@ -432,52 +463,74 @@ int pcrf_db_qos_data(
     return rv;
 }
 
+/*
+ * IP address to Gx Session-Id mapping
+ *
+ * ogs_hash_t copies the IP key. The value is our own copy of the
+ * Session-Id, freed when it is replaced or removed, so it does not depend
+ * on the Diameter session state. Lookups return a copy that the caller
+ * frees.
+ */
+static void sess_set(const void *key, int klen, const uint8_t *sid)
+{
+    char *old_sid = NULL, *new_sid = NULL;
+
+    ogs_assert(key);
+    ogs_assert(self.ip_hash);
+
+    if (sid) {
+        new_sid = ogs_strdup((char *)sid);
+        ogs_assert(new_sid);
+    }
+
+    ogs_thread_mutex_lock(&self.hash_lock);
+
+    /* A NULL new_sid removes the entry. */
+    old_sid = ogs_hash_get(self.ip_hash, key, klen);
+    ogs_hash_set(self.ip_hash, key, klen, new_sid);
+
+    ogs_thread_mutex_unlock(&self.hash_lock);
+
+    if (old_sid)
+        ogs_free(old_sid);
+}
+
+static uint8_t *sess_find(const void *key, int klen)
+{
+    char *sid = NULL;
+
+    ogs_assert(key);
+    ogs_assert(self.ip_hash);
+
+    ogs_thread_mutex_lock(&self.hash_lock);
+
+    sid = ogs_hash_get(self.ip_hash, key, klen);
+    if (sid) {
+        sid = ogs_strdup(sid);
+        ogs_assert(sid);
+    }
+
+    ogs_thread_mutex_unlock(&self.hash_lock);
+
+    return (uint8_t *)sid;
+}
+
 void pcrf_sess_set_ipv4(const void *key, uint8_t *sid)
 {
-    ogs_assert(self.ip_hash);
-
-    ogs_thread_mutex_lock(&self.hash_lock);
-
-    ogs_hash_set(self.ip_hash, key, OGS_IPV4_LEN, sid);
-
-    ogs_thread_mutex_unlock(&self.hash_lock);
+    sess_set(key, OGS_IPV4_LEN, sid);
 }
+
 void pcrf_sess_set_ipv6(const void *key, uint8_t *sid)
 {
-    ogs_assert(self.ip_hash);
-
-    ogs_thread_mutex_lock(&self.hash_lock);
-
-    ogs_hash_set(self.ip_hash, key, OGS_IPV6_DEFAULT_PREFIX_LEN >> 3, sid);
-
-    ogs_thread_mutex_unlock(&self.hash_lock);
+    sess_set(key, OGS_IPV6_DEFAULT_PREFIX_LEN >> 3, sid);
 }
 
 uint8_t *pcrf_sess_find_by_ipv4(const void *key)
 {
-    uint8_t *sid = NULL;
-    ogs_assert(key);
-
-    ogs_thread_mutex_lock(&self.hash_lock);
-
-    sid = (uint8_t *)ogs_hash_get(self.ip_hash, key, OGS_IPV4_LEN);
-
-    ogs_thread_mutex_unlock(&self.hash_lock);
-
-    return sid;
+    return sess_find(key, OGS_IPV4_LEN);
 }
 
 uint8_t *pcrf_sess_find_by_ipv6(const void *key)
 {
-    uint8_t *sid = NULL;
-    ogs_assert(key);
-
-    ogs_thread_mutex_lock(&self.hash_lock);
-
-    sid = (uint8_t *)ogs_hash_get(
-            self.ip_hash, key, OGS_IPV6_DEFAULT_PREFIX_LEN >> 3);
-
-    ogs_thread_mutex_unlock(&self.hash_lock);
-
-    return sid;
+    return sess_find(key, OGS_IPV6_DEFAULT_PREFIX_LEN >> 3);
 }

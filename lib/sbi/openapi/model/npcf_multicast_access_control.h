@@ -1,14 +1,14 @@
 /*
  * npcf_multicast_access_control.h
  *
- * 
+ * Indicates whether the service data flow, corresponding to the service data flow template, is allowed or not allowed. 
  */
 
 #ifndef _OpenAPI_npcf_multicast_access_control_H_
 #define _OpenAPI_npcf_multicast_access_control_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

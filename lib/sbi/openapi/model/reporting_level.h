@@ -1,14 +1,14 @@
 /*
  * reporting_level.h
  *
- * 
+ * Indicates the reporting level.   Possible values are: - SER_ID_LEVEL: Indicates that the usage shall be reported on service id and rating group combination level. - RAT_GR_LEVEL: Indicates that the usage shall be reported on rating group level. - SPON_CON_LEVEL: Indicates that the usage shall be reported on sponsor identity and rating group combination level. 
  */
 
 #ifndef _OpenAPI_reporting_level_H_
 #define _OpenAPI_reporting_level_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

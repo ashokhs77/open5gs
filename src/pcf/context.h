@@ -37,6 +37,13 @@ extern int __pcf_log_domain;
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __pcf_log_domain
 
+#define OGS_PCF_MAX_NUM_OF_QOS_PROFILE  64
+
+typedef struct pcf_qos_profile_s {
+    char    *reference;
+    uint8_t  qos_index;
+} pcf_qos_profile_t;
+
 typedef struct pcf_context_s {
     ogs_list_t      pcf_ue_am_list;
 #define PCF_UE_SM_IS_LAST_SESSION(__pCF) \
@@ -47,6 +54,12 @@ typedef struct pcf_context_s {
 
     ogs_hash_t      *ipv4addr_hash;
     ogs_hash_t      *ipv6prefix_hash;
+
+    pcf_qos_profile_t  qos_profile[OGS_PCF_MAX_NUM_OF_QOS_PROFILE];
+    int                num_of_qos_profile;
+
+    /* AF resPrio(PRIO_1..PRIO_16) to ARP priority level (0 = not mapped) */
+    uint8_t            arp_priority_level[OpenAPI_reserv_priority_PRIO_16 + 1];
 } pcf_context_t;
 
 struct pcf_ue_am_s {

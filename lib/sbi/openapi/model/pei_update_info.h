@@ -1,26 +1,26 @@
 /*
  * pei_update_info.h
  *
- * 
+ * This data type contains information about the PEI.
  */
 
 #ifndef _OpenAPI_pei_update_info_H_
 #define _OpenAPI_pei_update_info_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_pei_update_info_s OpenAPI_pei_update_info_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_pei_update_info_s OpenAPI_pei_update_info_t;
-typedef struct OpenAPI_pei_update_info_s {
+struct OpenAPI_pei_update_info_s {
     char *pei;
-} OpenAPI_pei_update_info_t;
+};
 
 OpenAPI_pei_update_info_t *OpenAPI_pei_update_info_create(
     char *pei

@@ -1,17 +1,18 @@
 /*
  * unrelated_class.h
  *
- * 
+ * Contains Unrelated Class
  */
 
 #ifndef _OpenAPI_unrelated_class_H_
 #define _OpenAPI_unrelated_class_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_unrelated_class_s OpenAPI_unrelated_class_t;
 #include "default_unrelated_class.h"
 #include "external_unrelated_class.h"
 #include "service_type_unrelated_class.h"
@@ -20,12 +21,11 @@
 extern "C" {
 #endif
 
-typedef struct OpenAPI_unrelated_class_s OpenAPI_unrelated_class_t;
-typedef struct OpenAPI_unrelated_class_s {
+struct OpenAPI_unrelated_class_s {
     struct OpenAPI_default_unrelated_class_s *default_unrelated_class;
     struct OpenAPI_external_unrelated_class_s *external_unrelated_class;
     OpenAPI_list_t *service_type_unrelated_classes;
-} OpenAPI_unrelated_class_t;
+};
 
 OpenAPI_unrelated_class_t *OpenAPI_unrelated_class_create(
     OpenAPI_default_unrelated_class_t *default_unrelated_class,

@@ -1,14 +1,14 @@
 /*
  * transport_protocol_1.h
  *
- * 
+ * Types of transport protocol used in a given IP endpoint of an NF Service Instance
  */
 
 #ifndef _OpenAPI_transport_protocol_1_H_
 #define _OpenAPI_transport_protocol_1_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

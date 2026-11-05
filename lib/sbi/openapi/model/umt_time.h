@@ -1,27 +1,27 @@
 /*
  * umt_time.h
  *
- * 
+ * Contains Umt Time
  */
 
 #ifndef _OpenAPI_umt_time_H_
 #define _OpenAPI_umt_time_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_umt_time_s OpenAPI_umt_time_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_umt_time_s OpenAPI_umt_time_t;
-typedef struct OpenAPI_umt_time_s {
+struct OpenAPI_umt_time_s {
     char *time_of_day;
     int day_of_week;
-} OpenAPI_umt_time_t;
+};
 
 OpenAPI_umt_time_t *OpenAPI_umt_time_create(
     char *time_of_day,

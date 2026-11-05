@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 by Ryan Dimsey <ryan@omnitouch.com.au>
+ * Copyright (C) 2026 by LetMeConnect
  *
  * This file is part of Open5GS.
  *
@@ -26,13 +26,61 @@
 extern "C" {
 #endif
 
-uint8_t mme_s13_handle_eca(
+/*
+ * Decision table, mirrored on src/amf/n5geir-handler.c. Every entry point
+ * returns the EMM cause to apply; OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED means
+ * "continue with the ULR".
+ *
+ *   WHITELISTED / GREYLISTED         -> accepted (greylist is logged)
+ *   BLACKLISTED                     -> #6 Illegal ME, always
+ *   DIAMETER_ERROR_EQUIPMENT_UNKNOWN -> unknown_action (#7 on reject)
+ *   no usable IMEISV                -> missing_pei_action (#7 on reject)
+ *   no verdict (error, timeout,
+ *   unrecognized Equipment-Status)  -> failure_action (#17 on reject)
+ *
+ * #7 is EPS services not allowed; #17 is Network failure.
+ *
+ * #17 is the EPS translation of the AMF's #90 (the UE retries after T3411).
+ * #6 and #7 both make the UE consider the USIM invalid for EPS until
+ * power-off or UICC removal (TS 24.301 5.5.1.2.5), as in the AMF.
+ */
+ogs_nas_emm_cause_t mme_s13_failure_cause(const mme_eir_t *eir_config);
+ogs_nas_emm_cause_t mme_s13_missing_pei_cause(const mme_eir_t *eir_config);
+ogs_nas_emm_cause_t mme_s13_equipment_status_cause(
+        uint32_t equipment_status_code, const mme_eir_t *eir_config);
+ogs_nas_emm_cause_t mme_s13_message_cause(
+        const ogs_diam_s13_message_t *s13_message, const mme_eir_t *eir_config);
+
+ogs_nas_emm_cause_t mme_s13_handle_eca(
         mme_ue_t *mme_ue, ogs_diam_s13_message_t *s13_message);
 
-/* The following have been exposed for testing purposes and
- * should ever be called in practice */
-uint8_t validate_s13_message(ogs_diam_s13_message_t *s13_message);
-uint8_t validate_eca(ogs_diam_s13_eca_message_t eca_message, ogs_nas_eir_t eir_config, mme_ue_t *mme_ue);
+/* ULR when accepted, Attach Reject + release otherwise, corresponding to
+ * the AMF's gmm_complete_equipment_identity_check(). */
+void mme_s13_complete_check(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        ogs_nas_emm_cause_t emm_cause);
+
+/* True when this procedure must be checked against the EIR:
+ * eir.enabled, an attach (v1: attach only), and not an emergency attach. */
+bool mme_s13_check_wanted(const mme_ue_t *mme_ue);
+
+/* 16 decimal digits, i.e. splittable into IMEI (14) + SVN (2) */
+bool mme_s13_imeisv_is_usable(const char *imeisv_bcd);
+
+/* Apply missing_pei_action or send an ECR with the validated IMEISV. */
+void mme_s13_start_check(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
+
+/*
+ * True only for the answer to the ECR the current attach is waiting for.
+ * A late answer of a cancelled or replaced procedure must neither send
+ * the ULR nor reject the UE.
+ */
+bool mme_s13_eca_is_current(const mme_ue_t *mme_ue,
+        const enb_ue_t *enb_ue, uint32_t eir_check_id);
+
+/* Shared reject path: Attach Reject + UE context release, with the
+ * cause chosen by the decision table above. */
+void mme_s13_reject_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        ogs_nas_emm_cause_t emm_cause);
 
 #ifdef __cplusplus
 }

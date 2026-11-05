@@ -1,21 +1,33 @@
-/*
- * Copyright (C) 2023 by Ryan Dimsey <ryan@omnitouch.com.au>
- *
- * This file is part of Open5GS.
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- */
+/*********************************************************************************************************
+ * Software License Agreement (BSD License)                                                               *
+ * Author: Thomas Klausner <tk@giga.or.at>                                                                *
+ *                                                                                                        *
+ * Copyright (c) 2013, Thomas Klausner                                                                    *
+ * All rights reserved.                                                                                   *
+ *                                                                                                        *
+ * Written under contract by nfotex IT GmbH, http://nfotex.com/                                           *
+ *                                                                                                        *
+ * Redistribution and use of this software in source and binary forms, with or without modification, are  *
+ * permitted provided that the following conditions are met:                                              *
+ *                                                                                                        *
+ * * Redistributions of source code must retain the above                                                 *
+ *   copyright notice, this list of conditions and the                                                    *
+ *   following disclaimer.                                                                                *
+ *                                                                                                        *
+ * * Redistributions in binary form must reproduce the above                                              *
+ *   copyright notice, this list of conditions and the                                                    *
+ *   following disclaimer in the documentation and/or other                                               *
+ *   materials provided with the distribution.                                                            *
+ *                                                                                                        *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED *
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A *
+ * PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR *
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT     *
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS    *
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR *
+ * TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF   *
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.                                                             *
+ *********************************************************************************************************/
 
 #include <freeDiameter/extension.h>
 
@@ -65,18 +77,13 @@ struct local_rules_definition {
     }                                                      \
 }
 
-#define enumval_def_u32( _val_, _str_ ) \
-        { _str_,         { .u32 = _val_ }}
-
-#define enumval_def_os( _len_, _val_, _str_ ) \
-        { _str_,         { .os = { .data = (unsigned char *)_val_, .len = _len_ }}}
-
 int ogs_dict_s13_entry(char *conffile)
 {
     struct dict_object *s13;
     TRACE_ENTRY("%p", conffile);
 
     /* Applications section */
+
     {
         struct dict_object * vendor;
         CHECK_FCT(fd_dict_search(fd_g_config->cnf_dict, DICT_VENDOR, VENDOR_BY_NAME, "3GPP", &vendor, ENOENT));
@@ -84,9 +91,8 @@ int ogs_dict_s13_entry(char *conffile)
         CHECK_FCT(fd_dict_new(fd_g_config->cnf_dict, DICT_APPLICATION, &app_data, vendor, &s13));
     }
 
-    /* AVP section */
     {
-        /* Terminal Information AVP - 3GPP TS 29.272 #7.3.3 */
+        /* Terminal-Information AVP - 3GPP TS 29.272 #7.3.3 */
         {
             struct dict_object * avp;
             struct local_rules_definition rules[] =
@@ -96,12 +102,32 @@ int ogs_dict_s13_entry(char *conffile)
                 { { .avp_vendor = 10415, .avp_name = "Software-Version" }, RULE_OPTIONAL, -1, 1 },
             };
 
-            CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Terminal-Information", &avp);
-            PARSE_loc_rules(rules, avp);
+            /* Search for Terminal-Information parent AVP */
+            if (fd_dict_search(fd_g_config->cnf_dict, DICT_AVP, AVP_BY_NAME_ALL_VENDORS,
+                              "Terminal-Information", &avp, ENOENT) == 0) {
+                /* Terminal-Information exists - register its sub-rules */
+                PARSE_loc_rules(rules, avp);
+            } else {
+                /* Terminal-Information doesn't exist - log warning but continue */
+                TRACE_DEBUG(INFO, "Terminal-Information AVP not found in dictionary - S13 may not work correctly");
+            }
         }
-    };
 
-    /* Command section */
+        /* Equipment-Status AVP - 3GPP TS 29.272 #7.3.8 */
+        {
+            struct dict_object * avp;
+            /* Equipment-Status typically has no sub-AVPs in S13, but we reference it */
+            /* If it needs sub-rules in the future, add them here */
+
+            if (fd_dict_search(fd_g_config->cnf_dict, DICT_AVP, AVP_BY_NAME_ALL_VENDORS,
+                              "Equipment-Status", &avp, ENOENT) != 0) {
+                /* Equipment-Status doesn't exist - log warning but continue */
+                TRACE_DEBUG(INFO, "Equipment-Status AVP not found in dictionary - S13 may not work correctly");
+            }
+        }
+    }
+
+    /* Command section. */
     {
         /* S13-ME-Identity-Check-Request - 3GPP TS 29.272 #7.2.19 */
         {
@@ -122,7 +148,7 @@ int ogs_dict_s13_entry(char *conffile)
                 {  {                      .avp_name = "Destination-Host" }, RULE_OPTIONAL, -1, 1 },
                 {  {                      .avp_name = "Destination-Realm" }, RULE_REQUIRED, -1, 1 },
                 {  { .avp_vendor = 10415, .avp_name = "Terminal-Information" }, RULE_REQUIRED, -1, 1 },
-                {  {                      .avp_name = "User-Name" }, RULE_REQUIRED, -1, 1 },
+                {  {                      .avp_name = "User-Name" }, RULE_OPTIONAL, -1, 1 },
                 {  {                      .avp_name = "Proxy-Info" }, RULE_OPTIONAL, -1, -1 },
                 {  {                      .avp_name = "Route-Record" }, RULE_OPTIONAL, -1, -1 },
 

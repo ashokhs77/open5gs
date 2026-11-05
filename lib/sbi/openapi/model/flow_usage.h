@@ -1,14 +1,14 @@
 /*
  * flow_usage.h
  *
- * 
+ * Describes the flow usage of the flows described by a media subcomponent.
  */
 
 #ifndef _OpenAPI_flow_usage_H_
 #define _OpenAPI_flow_usage_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

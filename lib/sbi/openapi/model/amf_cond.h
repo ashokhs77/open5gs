@@ -8,20 +8,20 @@
 #define _OpenAPI_amf_cond_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_amf_cond_s OpenAPI_amf_cond_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_amf_cond_s OpenAPI_amf_cond_t;
-typedef struct OpenAPI_amf_cond_s {
+struct OpenAPI_amf_cond_s {
     char *amf_set_id;
     char *amf_region_id;
-} OpenAPI_amf_cond_t;
+};
 
 OpenAPI_amf_cond_t *OpenAPI_amf_cond_create(
     char *amf_set_id,

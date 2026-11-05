@@ -8,21 +8,21 @@
 #define _OpenAPI_server_addressing_info_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_server_addressing_info_s OpenAPI_server_addressing_info_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_server_addressing_info_s OpenAPI_server_addressing_info_t;
-typedef struct OpenAPI_server_addressing_info_s {
+struct OpenAPI_server_addressing_info_s {
     OpenAPI_list_t *ipv4_addresses;
     OpenAPI_list_t *ipv6_addresses;
     OpenAPI_list_t *fqdn_list;
-} OpenAPI_server_addressing_info_t;
+};
 
 OpenAPI_server_addressing_info_t *OpenAPI_server_addressing_info_create(
     OpenAPI_list_t *ipv4_addresses,

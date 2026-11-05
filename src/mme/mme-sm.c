@@ -35,6 +35,7 @@
 #include "mme-s6a-handler.h"
 #include "mme-s13-handler.h"
 #include "mme-path.h"
+#include "mme-dns.h"
 
 void mme_state_initial(ogs_fsm_t *s, mme_event_t *e)
 {
@@ -265,6 +266,79 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         }
 
         mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+
+        if (mme_ue && mme_ue->attach_session_delete_pending) {
+            ogs_error("[%s] NAS message while deleting old Attach sessions",
+                    mme_ue->imsi_bcd);
+            ogs_pkbuf_free(pkbuf);
+            return;
+        }
+
+        /*
+         * ATTACH REQUEST on an S1 context that already belongs to
+         * someone else.
+         *
+         *   InitialUEMessage(S-TMSI of IMSI-A) -> enb_ue bound to A
+         *   NAS MAC failed -> Service Reject #9 -> binding kept
+         *   Attach Request(IMSI-B) on the same connection
+         *     -> dispatched to A's context, not to B's
+         *
+         * The identity in the message is never looked at, so
+         * mme_ue_set_imsi() re-labels A's context as B and moves B's
+         * sessions into it. If A still owns sessions, Phase-2 hits
+         *
+         *     ogs_assert(ogs_list_empty(&mme_ue->sess_list));
+         *
+         * and the MME aborts. If B is unknown to the MME there is no
+         * abort - A's sessions silently become B's instead.
+         *
+         * Any UE can get here; a stale GUTI is enough.
+         *
+         * So re-resolve the identity, and if it names someone else:
+         *
+         *   registered, or owns a session -> release, drop the Attach
+         *   otherwise                     -> leave it, nothing to lose
+         *
+         * Release means Release Access Bearers followed by S1 release,
+         * so A's user plane is gone before the UE retries on a fresh S1
+         * context. Handing the S1 context over instead would leave A's
+         * bearers pointing at a connection that now serves B.
+         */
+        if (mme_ue && MME_UE_HAVE_IMSI(mme_ue) &&
+            nas_message.emm.h.message_type == OGS_NAS_EPS_ATTACH_REQUEST) {
+            mme_ue_t *attaching_ue = mme_ue_find_by_message(&nas_message);
+
+            if (attaching_ue != mme_ue &&
+                (OGS_FSM_CHECK(&mme_ue->sm, emm_state_registered) ||
+                 ogs_list_count(&mme_ue->sess_list))) {
+                ogs_warn("Attach Request identity does not match "
+                        "the associated S1 context");
+                ogs_warn("    Associated IMSI[%s] ue_id[%d] sessions[%d] "
+                        "bitmap[0x%04x]",
+                        mme_ue->imsi_bcd, mme_ue->id,
+                        ogs_list_count(&mme_ue->sess_list),
+                        mme_ue->ebi_bitmap);
+                if (attaching_ue)
+                    ogs_warn("    Requested IMSI[%s] ue_id[%d] "
+                            "sessions[%d] bitmap[0x%04x]",
+                            attaching_ue->imsi_bcd, attaching_ue->id,
+                            ogs_list_count(&attaching_ue->sess_list),
+                            attaching_ue->ebi_bitmap);
+                else
+                    ogs_warn("    Requested identity has no MME-UE "
+                            "context yet");
+                ogs_warn("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
+                        enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
+
+                enb_ue->relcause.group = S1AP_Cause_PR_nas;
+                enb_ue->relcause.cause = S1AP_CauseNas_normal_release;
+                mme_send_release_access_bearer_or_ue_context_release(enb_ue);
+
+                ogs_pkbuf_free(pkbuf);
+                return;
+            }
+        }
+
         if (!mme_ue) {
             mme_ue = mme_ue_find_by_message(&nas_message);
             if (!mme_ue) {
@@ -282,6 +356,17 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
                 ogs_assert(ECM_IDLE(mme_ue));
             } else {
+                if (mme_ue->attach_session_delete_pending) {
+                    ogs_error("[%s] NAS message while deleting old Attach "
+                            "sessions", mme_ue->imsi_bcd);
+                    r = s1ap_send_ue_context_release_command(enb_ue,
+                            S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+                            S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
+                    ogs_expect(r == OGS_OK);
+                    ogs_assert(r != OGS_ERROR);
+                    ogs_pkbuf_free(pkbuf);
+                    return;
+                }
                 /* Here, if the MME_UE Context is found,
                  * the integrity check is not performed
                  * For example, ATTACH_REQUEST,
@@ -333,13 +418,13 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         }
 
         ogs_assert(mme_ue);
-        if (!OGS_FSM_STATE(&mme_ue->sm)) 
+        if (!OGS_FSM_STATE(&mme_ue->sm))
         {
              ogs_error("IMSI [%s] has no active FSM state, dropping EMM message [%d], ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d], context [%p:%p]",
              mme_ue->imsi_bcd, nas_message.emm.h.message_type, enb_ue ? enb_ue->enb_ue_s1ap_id : 0,
                     enb_ue ? enb_ue->mme_ue_s1ap_id : 0,enb_ue, mme_ue);
              mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue); //release the ue when the SM state is inactive
-             ogs_pkbuf_free(pkbuf); //once release mme_ue, need to free the pkbuf 
+             ogs_pkbuf_free(pkbuf); //once release mme_ue, need to free the pkbuf
              return;
         }
         ogs_assert(OGS_FSM_STATE(&mme_ue->sm));
@@ -356,7 +441,10 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         break;
     case MME_EVENT_EMM_TIMER:
         mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-        ogs_assert(mme_ue);
+        if (!mme_ue) {
+            ogs_error("MME-UE Context has already been removed");
+            break;
+        }
         ogs_assert(OGS_FSM_STATE(&mme_ue->sm));
 
         ogs_fsm_dispatch(&mme_ue->sm, e);
@@ -368,6 +456,12 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);
+        if (mme_ue->attach_session_delete_pending || mme_ue->eir_check_pending) {
+            ogs_error("[%s] ESM message while "
+                    "checking EIR or deleting sessions", mme_ue->imsi_bcd);
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
         if (ogs_nas_esm_decode(&nas_message, pkbuf) != OGS_OK) {
             ogs_error("ogs_nas_esm_decode() failed");
             ogs_pkbuf_free(pkbuf);
@@ -516,7 +610,10 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
     case MME_EVENT_ESM_TIMER:
         bearer = mme_bearer_find_by_id(e->bearer_id);
-        ogs_assert(bearer);
+        if (!bearer) {
+            ogs_error("Bearer Context has already been removed");
+            break;
+        }
         ogs_assert(OGS_FSM_STATE(&bearer->sm));
 
         ogs_fsm_dispatch(&bearer->sm, e);
@@ -582,6 +679,12 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         switch (s6a_message->cmd_code) {
         case OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION:
             ogs_debug("OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION");
+            if (!OGS_FSM_CHECK(&mme_ue->sm, emm_state_authentication) ||
+                !enb_ue || !ENB_UE_IS_SERVING(mme_ue, enb_ue)) {
+                ogs_error("[%s] Ignore AIA for an inactive authentication",
+                        mme_ue->imsi_bcd);
+                break;
+            }
             if (e->gtp_xact_id != OGS_INVALID_POOL_ID)
                 xact = ogs_gtp_xact_find_by_id(e->gtp_xact_id);
             else
@@ -618,9 +721,17 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                 } else
                     ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
 
-                r = s1ap_send_ue_context_release_command(enb_ue,
-                        S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
-                        S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
+                if (mme_ue->can_restore_context &&
+                    OGS_FSM_CHECK(&mme_ue->sm, emm_state_authentication)) {
+                    MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, &mme_ue->sm);
+                    r = s1ap_send_ue_context_release_command(enb_ue,
+                            S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+                            S1AP_UE_CTX_REL_S1_REMOVE_AND_UNLINK, 0);
+                } else {
+                    r = s1ap_send_ue_context_release_command(enb_ue,
+                            S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+                            S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
+                }
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
                 break;
@@ -691,47 +802,43 @@ cleanup:
         ogs_subscription_data_free(&s6a_message->ula_message.subscription_data);
         ogs_free(s6a_message);
         break;
+
     case MME_EVENT_S13_MESSAGE:
-        mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-		enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-        ogs_assert(mme_ue);
         s13_message = e->s13_message;
         ogs_assert(s13_message);
 
-        switch(s13_message->cmd_code) {
-            case OGS_DIAM_S13_CMD_CODE_ME_IDENTITY_CHECK:
-                emm_cause = mme_s13_handle_eca(mme_ue, s13_message);
-                if (emm_cause != OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED) {
-                    ogs_info("[%s] Attach reject [OGS_NAS_EMM_CAUSE:%d]",
-                            mme_ue->imsi_bcd, emm_cause);
-                    
-                    if (!enb_ue) {
-                        ogs_error("S13 context has already been removed");
-                        break;
-                    }
-                    ogs_assert(OGS_OK ==
-                        nas_eps_send_attach_reject(enb_ue, mme_ue, emm_cause,
-                            OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED));
-
-                    ogs_assert(OGS_OK ==
-                        s1ap_send_ue_context_release_command(enb_ue,
-                            S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
-                            S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0));
-                    break;
-                }
-                else {
-                    /* Now that the UE has been
-                     * validated we can send the 
-                     * Update Location Request to HSS */
-                    mme_s6a_send_ulr(enb_ue, mme_ue, 0);
-                }
-                break;
-            default:
-                ogs_error("Invalid Type[%d]", s13_message->cmd_code);
-                break;
+        /*
+         * Same race condition as for S6A_MESSAGE above: the UE context may
+         * have been removed while the EIR was being queried.
+         */
+        mme_ue = mme_ue_find_by_id(e->mme_ue_id);
+        if (!mme_ue) {
+            ogs_error("UE(mme-ue) context has already been removed");
+            ogs_free(s13_message);
+            break;
         }
+
+        enb_ue = enb_ue_find_by_id(e->enb_ue_id);
+
+        switch (s13_message->cmd_code) {
+        case OGS_DIAM_S13_CMD_CODE_ME_IDENTITY_CHECK:
+            ogs_debug("OGS_DIAM_S13_CMD_CODE_ME_IDENTITY_CHECK");
+            if (!mme_s13_eca_is_current(
+                        mme_ue, enb_ue, e->eir_check_id))
+                break;
+            mme_ue->eir_check_pending = false;
+
+            emm_cause = mme_s13_handle_eca(mme_ue, s13_message);
+            mme_s13_complete_check(enb_ue, mme_ue, emm_cause);
+            break;
+        default:
+            ogs_error("Invalid Type[%d]", s13_message->cmd_code);
+            break;
+        }
+
         ogs_free(s13_message);
         break;
+
     case MME_EVENT_S11_MESSAGE:
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);
@@ -901,6 +1008,10 @@ cleanup:
         }
         break;
 
+    case MME_EVENT_DNS_RESOLVED:
+        mme_dns_handle_resolved(e);
+        break;
+
     case MME_EVENT_GN_MESSAGE:
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);
@@ -975,9 +1086,15 @@ cleanup:
 
     case MME_EVENT_GN_TIMER:
         mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-        ogs_assert(mme_ue);
+        if (!mme_ue) {
+            ogs_error("MME-UE Context has already been removed");
+            break;
+        }
         sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-        ogs_assert(sgw_ue);
+        if (!sgw_ue) {
+            ogs_error("SGW-UE Context has already been removed");
+            break;
+        }
 
         switch (e->timer_id) {
         case MME_TIMER_GN_HOLDING:

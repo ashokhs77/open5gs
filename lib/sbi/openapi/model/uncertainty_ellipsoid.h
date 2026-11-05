@@ -8,22 +8,22 @@
 #define _OpenAPI_uncertainty_ellipsoid_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_uncertainty_ellipsoid_s OpenAPI_uncertainty_ellipsoid_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_uncertainty_ellipsoid_s OpenAPI_uncertainty_ellipsoid_t;
-typedef struct OpenAPI_uncertainty_ellipsoid_s {
+struct OpenAPI_uncertainty_ellipsoid_s {
     float semi_major;
     float semi_minor;
     float vertical;
     int orientation_major;
-} OpenAPI_uncertainty_ellipsoid_t;
+};
 
 OpenAPI_uncertainty_ellipsoid_t *OpenAPI_uncertainty_ellipsoid_create(
     float semi_major,

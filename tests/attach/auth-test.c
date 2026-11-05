@@ -22,6 +22,7 @@
 static void test1_func(abts_case *tc, void *data)
 {
     int rv;
+    uint8_t active_ksi;
     ogs_socknode_t *s1ap;
     ogs_socknode_t *gtpu;
     ogs_pkbuf_t *emmbuf;
@@ -135,6 +136,9 @@ static void test1_func(abts_case *tc, void *data)
     recvbuf = testenb_s1ap_read(s1ap);
     ABTS_PTR_NOTNULL(tc, recvbuf);
     tests1ap_recv(test_ue, recvbuf);
+
+    /* Preserve this active KSI across the failed authentication attempts. */
+    active_ksi = test_ue->nas.ksi;
 
     /* Send Security mode complete */
     test_ue->mobile_identity_imeisv_presence = true;
@@ -295,27 +299,11 @@ static void test1_func(abts_case *tc, void *data)
     rv = testenb_s1ap_send(s1ap, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
 
-#if SEND_UE_CONTEXT_RELEASE_COMMAND_IN_INTEGRITY_UNPROTECTED
-    /* Receive OLD UE Context Release Command */
-    enb_ue_s1ap_id = test_ue->enb_ue_s1ap_id;
-
-    recvbuf = testenb_s1ap_read(s1ap);
-    ABTS_PTR_NOTNULL(tc, recvbuf);
-    tests1ap_recv(test_ue, recvbuf);
-
-    /* Send OLD UE Context Release Complete */
-    sendbuf = test_s1ap_build_ue_context_release_complete(test_ue);
-    ABTS_PTR_NOTNULL(tc, sendbuf);
-    rv = testenb_s1ap_send(s1ap, sendbuf);
-    ABTS_INT_EQUAL(tc, OGS_OK, rv);
-
-    test_ue->enb_ue_s1ap_id = enb_ue_s1ap_id;
-#endif
-
     /* Receive Authentication request */
     recvbuf = testenb_s1ap_read(s1ap);
     ABTS_PTR_NOTNULL(tc, recvbuf);
     tests1ap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, active_ksi, test_ue->nas.ksi);
 
     /* Send Authentication failure - SYNCH failure */
     emmbuf = testemm_build_authentication_failure(
@@ -330,6 +318,7 @@ static void test1_func(abts_case *tc, void *data)
     recvbuf = testenb_s1ap_read(s1ap);
     ABTS_PTR_NOTNULL(tc, recvbuf);
     tests1ap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, active_ksi, test_ue->nas.ksi);
 
     /* Send Authentication failure - SYNCH failure */
     emmbuf = testemm_build_authentication_failure(
@@ -344,6 +333,7 @@ static void test1_func(abts_case *tc, void *data)
     recvbuf = testenb_s1ap_read(s1ap);
     ABTS_PTR_NOTNULL(tc, recvbuf);
     tests1ap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, active_ksi, test_ue->nas.ksi);
 
     /* Send Attach Request - No Integrity */
     sess->pdn_connectivity_param.eit = 1;
@@ -366,7 +356,6 @@ static void test1_func(abts_case *tc, void *data)
     rv = testenb_s1ap_send(s1ap, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
 
-#if SEND_UE_CONTEXT_RELEASE_COMMAND_IN_INTEGRITY_UNPROTECTED
     /* Receive OLD UE Context Release Command */
     enb_ue_s1ap_id = test_ue->enb_ue_s1ap_id;
 
@@ -381,12 +370,12 @@ static void test1_func(abts_case *tc, void *data)
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
 
     test_ue->enb_ue_s1ap_id = enb_ue_s1ap_id;
-#endif
 
     /* Receive Authentication request */
     recvbuf = testenb_s1ap_read(s1ap);
     ABTS_PTR_NOTNULL(tc, recvbuf);
     tests1ap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, active_ksi, test_ue->nas.ksi);
 
     /* Send Authentication failure - MAC failure */
     emmbuf = testemm_build_authentication_failure(
@@ -401,6 +390,7 @@ static void test1_func(abts_case *tc, void *data)
     recvbuf = testenb_s1ap_read(s1ap);
     ABTS_PTR_NOTNULL(tc, recvbuf);
     tests1ap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, active_ksi, test_ue->nas.ksi);
 
     /*
      * --- Immediately Re-attach Test ---
@@ -454,10 +444,26 @@ static void test1_func(abts_case *tc, void *data)
     rv = testenb_s1ap_send(s1ap, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
 
+    /* Receive OLD UE Context Release Command */
+    enb_ue_s1ap_id = test_ue->enb_ue_s1ap_id;
+
+    recvbuf = testenb_s1ap_read(s1ap);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    tests1ap_recv(test_ue, recvbuf);
+
+    /* Send OLD UE Context Release Complete */
+    sendbuf = test_s1ap_build_ue_context_release_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testenb_s1ap_send(s1ap, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    test_ue->enb_ue_s1ap_id = enb_ue_s1ap_id;
+
     /* Receive Authentication Request */
     recvbuf = testenb_s1ap_read(s1ap);
     ABTS_PTR_NOTNULL(tc, recvbuf);
     tests1ap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, active_ksi, test_ue->nas.ksi);
 
     /* Send Authentication failure - MAC failure */
     emmbuf = testemm_build_authentication_failure(
@@ -472,6 +478,7 @@ static void test1_func(abts_case *tc, void *data)
     recvbuf = testenb_s1ap_read(s1ap);
     ABTS_PTR_NOTNULL(tc, recvbuf);
     tests1ap_recv(test_ue, recvbuf);
+    ABTS_INT_EQUAL(tc, active_ksi, test_ue->nas.ksi);
 
     /* Send Detach Request */
     emmbuf = testemm_build_detach_request(test_ue, 1, true, false);
@@ -481,6 +488,21 @@ static void test1_func(abts_case *tc, void *data)
     ABTS_PTR_NOTNULL(tc, sendbuf);
     rv = testenb_s1ap_send(s1ap, sendbuf);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    /* Receive OLD UE Context Release Command */
+    enb_ue_s1ap_id = test_ue->enb_ue_s1ap_id;
+
+    recvbuf = testenb_s1ap_read(s1ap);
+    ABTS_PTR_NOTNULL(tc, recvbuf);
+    tests1ap_recv(test_ue, recvbuf);
+
+    /* Send OLD UE Context Release Complete */
+    sendbuf = test_s1ap_build_ue_context_release_complete(test_ue);
+    ABTS_PTR_NOTNULL(tc, sendbuf);
+    rv = testenb_s1ap_send(s1ap, sendbuf);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+
+    test_ue->enb_ue_s1ap_id = enb_ue_s1ap_id;
 
     /* Receive OLD UE Context Release Command */
     enb_ue_s1ap_id = test_ue->enb_ue_s1ap_id;

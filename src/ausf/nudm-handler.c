@@ -46,7 +46,8 @@ bool ausf_nudm_ueau_handle_get(ausf_ue_t *ausf_ue,
     OpenAPI_authentication_info_result_t *AuthenticationInfoResult = NULL;
     OpenAPI_authentication_vector_t *AuthenticationVector = NULL;
     OpenAPI_ue_authentication_ctx_t UeAuthenticationCtx;
-    OpenAPI_ue_authentication_ctx_5g_auth_data_t AV5G_AKA;
+    OpenAPI_ue_authentication_ctx_5g_auth_data_t AuthData;
+    OpenAPI_av5g_aka_t AV5G_AKA;
     OpenAPI_map_t *LinksValueScheme = NULL;
     OpenAPI_links_value_schema_t LinksValueSchemeValue;
 
@@ -170,8 +171,8 @@ bool ausf_nudm_ueau_handle_get(ausf_ue_t *ausf_ue,
 
     /* SUPI */
     if (ausf_ue->supi) {
-        ogs_hash_set(ausf_self()->supi_hash,
-                ausf_ue->supi, strlen(ausf_ue->supi), NULL);
+        ogs_hash_unset_if_owner(ausf_self()->supi_hash,
+                ausf_ue->supi, strlen(ausf_ue->supi), ausf_ue);
         ogs_free(ausf_ue->supi);
     }
     ausf_ue->supi = ogs_strdup(AuthenticationInfoResult->supi);
@@ -208,12 +209,15 @@ bool ausf_nudm_ueau_handle_get(ausf_ue_t *ausf_ue,
             hxres_star_string, sizeof(hxres_star_string));
     AV5G_AKA.hxres_star = hxres_star_string;
 
-    UeAuthenticationCtx._5g_auth_data = &AV5G_AKA;
+    memset(&AuthData, 0, sizeof(AuthData));
+    AuthData.av5g_aka = &AV5G_AKA;
+    UeAuthenticationCtx._5g_auth_data = &AuthData;
 
     memset(&LinksValueSchemeValue, 0, sizeof(LinksValueSchemeValue));
 
     memset(&header, 0, sizeof(header));
-    header.service.name = (char *)OGS_SBI_SERVICE_NAME_NAUSF_AUTH;
+    header.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nausf_auth);
     header.api.version = (char *)OGS_SBI_API_V1;
     header.resource.component[0] =
             (char *)OGS_SBI_RESOURCE_NAME_UE_AUTHENTICATIONS;
@@ -233,7 +237,8 @@ bool ausf_nudm_ueau_handle_get(ausf_ue_t *ausf_ue,
     memset(&sendmsg, 0, sizeof(sendmsg));
 
     memset(&header, 0, sizeof(header));
-    header.service.name = (char *)OGS_SBI_SERVICE_NAME_NAUSF_AUTH;
+    header.service.name =
+        OpenAPI_service_name_ToString(OpenAPI_service_name_nausf_auth);
     header.api.version = (char *)OGS_SBI_API_V1;
     header.resource.component[0] =
             (char *)OGS_SBI_RESOURCE_NAME_UE_AUTHENTICATIONS;

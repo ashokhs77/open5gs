@@ -1,14 +1,14 @@
 /*
  * ue_reachable_ind.h
  *
- * 
+ * UE Reachable Indication
  */
 
 #ifndef _OpenAPI_ue_reachable_ind_H_
 #define _OpenAPI_ue_reachable_ind_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"

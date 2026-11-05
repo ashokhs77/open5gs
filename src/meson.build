@@ -36,6 +36,11 @@ configure_file(output : 'version.h', configuration : version_conf)
 # License Checker integration
 incdir_license = include_directories('../src')
 license_lib = cc.find_library('LwsLicenseCheck', dirs: ['/usr/lib64'], required: true)
+executable('license_check_helper',
+    sources : 'license_check_helper.c',
+    include_directories : incdir_license,
+    dependencies : license_lib,
+    install : true)
 
 
 subdir('mme')
@@ -53,6 +58,7 @@ subdir('udm')
 subdir('pcf')
 subdir('nssf')
 subdir('bsf')
+subdir('eir')
 subdir('ausf')
 subdir('upf')
 subdir('smf')

@@ -38,10 +38,10 @@ bool smf_sbi_send_request(
         ogs_sbi_nf_instance_t *nf_instance, ogs_sbi_xact_t *xact);
 
 /*
- * PFCP delete triggers are defined in lib/pfcp/xact.h (values 1–7).
+ * PFCP delete triggers are defined in lib/pfcp/xact.h (values 1â€“7).
  * To avoid overlap with OGS_PFCP_DELETE_TRIGGER_*, SMF states use:
- *   - UPDATE_STATE_BASE at 0x10–0x14
- *   - UECM_STATE_BASE   at 0x20–0x23
+ *   - UPDATE_STATE_BASE at 0x10â€“0x14
+ *   - UECM_STATE_BASE   at 0x20â€“0x23
  * HR flag is bit 7 (0x80).
  */
 
@@ -55,7 +55,7 @@ bool smf_sbi_send_request(
     (SMF_CREATE_STATE_BASE + 0x00U)  /* 0x00 */
 
 /* Base offset for SMF_UPDATE states */
-#define SMF_UPDATE_STATE_BASE       0x20U           /* UPDATE at 0x20–0x24 */
+#define SMF_UPDATE_STATE_BASE       0x20U           /* UPDATE at 0x20â€“0x24 */
 
 /* SMF_UPDATE base states */
 #define SMF_UPDATE_STATE_NONE                       \
@@ -82,7 +82,7 @@ bool smf_sbi_send_request(
     (SMF_REMOVE_STATE_BASE + 0x00U)  /* 0x00 */
 
 /* Base offset for SMF_UECM states */
-#define SMF_UECM_STATE_BASE         0x40U           /* UECM at 0x40–0x43 */
+#define SMF_UECM_STATE_BASE         0x40U           /* UECM at 0x40â€“0x43 */
 
 /* SMF_UECM base states */
 #define SMF_UECM_STATE_NONE                 \
@@ -103,7 +103,7 @@ bool smf_sbi_send_request(
     (SMF_UECM_STATE_DEREG_BY_N1N2 | SMF_STATE_HR)   /* 0xC3 */
 
 int smf_sbi_discover_and_send(
-        ogs_sbi_service_type_e service_type,
+        OpenAPI_service_name_e service_name,
         ogs_sbi_discovery_option_t *discovery_option,
         ogs_sbi_request_t *(*build)(smf_sess_t *sess, void *data),
         smf_sess_t *sess, ogs_sbi_stream_t *stream, int state, void *data);
@@ -194,8 +194,8 @@ void smf_sbi_send_sm_context_update_error(
 
 /* Cleanup modes for session resources via SBI */
 typedef enum {
-    SMF_SBI_CLEANUP_MODE_POLICY_FIRST = 1,   /* Policy?Subscr?Context */
-    SMF_SBI_CLEANUP_MODE_SUBSCRIPTION_FIRST, /* Subscr?Context */
+    SMF_SBI_CLEANUP_MODE_POLICY_FIRST = 1,   /* Policyâ†’Subscrâ†’Context */
+    SMF_SBI_CLEANUP_MODE_SUBSCRIPTION_FIRST, /* Subscrâ†’Context */
     SMF_SBI_CLEANUP_MODE_CONTEXT_ONLY        /* Context only */
 } smf_sbi_cleanup_mode_t;
 
@@ -216,7 +216,7 @@ int smf_sbi_cleanup_session(
 
 bool smf_sbi_send_sm_context_status_notify(smf_sess_t *sess);
 
-void smf_sbi_send_pdu_session_created_data(
+bool smf_sbi_send_pdu_session_created_data(
         smf_sess_t *sess, ogs_sbi_stream_t *stream);
 void smf_sbi_send_pdu_session_create_error(
         ogs_sbi_stream_t *stream,

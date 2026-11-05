@@ -29,6 +29,30 @@ static struct disp_hdl *hdl_swx_mar = NULL;
 /* handler for Server-Assignment-Request cb */
 static struct disp_hdl *hdl_swx_sar = NULL;
 
+static bool hss_swx_user_name_to_imsi_bcd(
+        const char *user_name, char *imsi_bcd, size_t imsi_bcd_len)
+{
+    size_t i, j = 0;
+
+    ogs_assert(imsi_bcd);
+
+    if (!user_name || imsi_bcd_len == 0)
+        return false;
+
+    imsi_bcd[0] = '\0';
+
+    for (i = 0; user_name[i]; i++) {
+        if (user_name[i] >= '0' && user_name[i] <= '9') {
+            if (j + 1 >= imsi_bcd_len)
+                return false;
+            imsi_bcd[j++] = user_name[i];
+        }
+    }
+    imsi_bcd[j] = '\0';
+
+    return ogs_imsi_bcd_is_valid(imsi_bcd);
+}
+
 /* Default callback for the application. */
 static int hss_ogs_diam_swx_fb_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
@@ -130,7 +154,13 @@ static int hss_ogs_diam_swx_mar_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    ogs_extract_digit_from_string(imsi_bcd, user_name);
+    if (hss_swx_user_name_to_imsi_bcd(
+                user_name, imsi_bcd, sizeof(imsi_bcd)) == false) {
+        ogs_error("Invalid User-Name IMSI");
+        result_code = OGS_DIAM_INVALID_AVP_VALUE;
+        error_occurred = 1;
+        goto out;
+    }
 
     /* Get the SIP-Auth-Data-Item AVP (Mandatory) */
     ret = fd_msg_search_avp(
@@ -210,6 +240,16 @@ static int hss_ogs_diam_swx_mar_cb(struct msg **msg, struct avp *avp,
     if (ret == 0 && sip_authorization_avp) {
         ret = fd_msg_avp_hdr(sip_authorization_avp, &hdr);
         if (ret == 0 && hdr) {
+            if (!hdr->avp_value || !hdr->avp_value->os.data ||
+                    hdr->avp_value->os.len !=
+                    OGS_RAND_LEN + OGS_AUTS_LEN) {
+                ogs_error("Invalid SIP-Authorization length [%d]",
+                        hdr->avp_value ?
+                        (int)hdr->avp_value->os.len : -1);
+                result_code = OGS_DIAM_INVALID_AVP_VALUE;
+                error_occurred = 1;
+                goto out;
+            }
             ogs_auc_sqn(opc, auth_info.k,
                     hdr->avp_value->os.data,
                     hdr->avp_value->os.data + OGS_RAND_LEN,
@@ -668,7 +708,13 @@ static int hss_ogs_diam_swx_sar_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    ogs_extract_digit_from_string(imsi_bcd, user_name);
+    if (hss_swx_user_name_to_imsi_bcd(
+                user_name, imsi_bcd, sizeof(imsi_bcd)) == false) {
+        ogs_error("Invalid User-Name IMSI");
+        result_code = OGS_DIAM_INVALID_AVP_VALUE;
+        error_occurred = 1;
+        goto out;
+    }
 
     /* DB : HSS Subscription Data */
     rv = hss_db_subscription_data(imsi_bcd, &subscription_data);

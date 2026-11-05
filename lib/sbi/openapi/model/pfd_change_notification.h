@@ -8,25 +8,25 @@
 #define _OpenAPI_pfd_change_notification_H_
 
 #include <string.h>
-#include "../external/cJSON.h"
+#include "third-party/cjson/cJSON.h"
 #include "../include/list.h"
 #include "../include/keyValuePair.h"
 #include "../include/binary.h"
+typedef struct OpenAPI_pfd_change_notification_s OpenAPI_pfd_change_notification_t;
 #include "pfd_content.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct OpenAPI_pfd_change_notification_s OpenAPI_pfd_change_notification_t;
-typedef struct OpenAPI_pfd_change_notification_s {
+struct OpenAPI_pfd_change_notification_s {
     char *application_id;
     bool is_removal_flag;
     int removal_flag;
     bool is_partial_flag;
     int partial_flag;
     OpenAPI_list_t *pfds;
-} OpenAPI_pfd_change_notification_t;
+};
 
 OpenAPI_pfd_change_notification_t *OpenAPI_pfd_change_notification_create(
     char *application_id,
