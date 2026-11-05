@@ -114,7 +114,8 @@ static int attach_command(mme_ue_t *ue)
 }
 static int attach_auth_request(mme_ue_t *ue)
 { return OGS_OK; }
-static int attach_auth_reject(mme_ue_t *ue)
+static int attach_auth_reject(mme_ue_t *ue,
+        int failure_cause, const char *failure_reason)
 { f->rejects++; return OGS_OK; }
 static int attach_reject(enb_ue_t *enb, mme_ue_t *ue,
         uint8_t emm_cause, uint8_t esm_cause)
