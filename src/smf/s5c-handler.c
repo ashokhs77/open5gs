@@ -1405,6 +1405,32 @@ void smf_s5c_handle_bearer_resource_command(
 
     ogs_assert(cmd->traffic_aggregate_description.len == decoded);
 
+    /*
+     * TS 24.008 10.5.6.12: packet filter direction 00 is a pre Rel-7 TFT
+     * filter and names no traffic direction.  smf_bearer_tft_update() can
+     * only place downlink, uplink or bi-directional filters and aborts the
+     * SMF on anything else, so reject the request before any packet filter
+     * of the bearer is created or changed.
+     */
+    if (tft.code == OGS_GTP2_TFT_CODE_CREATE_NEW_TFT ||
+        tft.code == OGS_GTP2_TFT_CODE_ADD_PACKET_FILTERS_TO_EXISTING_TFT ||
+        tft.code == OGS_GTP2_TFT_CODE_REPLACE_PACKET_FILTERS_IN_EXISTING) {
+        for (i = 0; i < tft.num_of_packet_filter &&
+                    i < OGS_MAX_NUM_OF_FLOW_IN_GTP; i++) {
+            if (tft.pf[i].direction != OGS_FLOW_DOWNLINK_ONLY &&
+                tft.pf[i].direction != OGS_FLOW_UPLINK_ONLY &&
+                tft.pf[i].direction != OGS_FLOW_BIDIRECTIONAL) {
+                ogs_error("Unsupported packet filter direction [%d]",
+                        tft.pf[i].direction);
+                ogs_gtp2_send_error_message(
+                    xact, get_sender_f_teid(sess, sender_f_teid),
+                    OGS_GTP2_BEARER_RESOURCE_FAILURE_INDICATION_TYPE,
+                    OGS_GTP2_CAUSE_SEMANTIC_ERRORS_IN_PACKET_FILTER);
+                return;
+            }
+        }
+    }
+
     if (tft.code == OGS_GTP2_TFT_CODE_NO_TFT_OPERATION) {
         /* No operation */
     } else if (tft.code == OGS_GTP2_TFT_CODE_DELETE_EXISTING_TFT) {
@@ -1600,12 +1626,25 @@ void smf_s5c_handle_bearer_resource_command(
             return;
         }
 
-        bearer->qos.mbr.uplink = flow_qos.ul_mbr;
-        bearer->qos.mbr.downlink = flow_qos.dl_mbr;
-        bearer->qos.gbr.uplink = flow_qos.ul_gbr;
-        bearer->qos.gbr.downlink = flow_qos.dl_gbr;
+        /*
+         * TS 24.301 6.5.4.2: the UE can change the GBR of a GBR bearer
+         * only, and TS 29.274 8.15: a non-GBR bearer has no bit rates.
+         * So ignore the Flow QoS for a non-GBR bearer. This includes
+         * the default bearer, whose QoS is in sess->session.qos and
+         * not in bearer->qos.
+         */
+        if (bearer->qos.mbr.downlink || bearer->qos.mbr.uplink ||
+            bearer->qos.gbr.downlink || bearer->qos.gbr.uplink) {
+            bearer->qos.mbr.uplink = flow_qos.ul_mbr;
+            bearer->qos.mbr.downlink = flow_qos.dl_mbr;
+            bearer->qos.gbr.uplink = flow_qos.ul_gbr;
+            bearer->qos.gbr.downlink = flow_qos.dl_gbr;
 
-        qos_update = 1;
+            qos_update = 1;
+        } else {
+            ogs_warn("Ignore Flow QoS for non-GBR bearer [EBI:%d]",
+                    bearer->ebi);
+        }
     }
 
     if (tft_update == 0 && tft_delete == 0 && qos_update == 0) {

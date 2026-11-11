@@ -338,6 +338,12 @@ bool ogs_id_bcd_is_valid(
 bool ogs_pei_is_valid(const char *pei);
 bool ogs_imsi_bcd_is_valid(const char *imsi_bcd);
 bool ogs_imeisv_bcd_is_valid(const char *imeisv_bcd);
+/*
+ * Require non-empty type and value separated by exactly one '-'.
+ * IMSI values must also pass ogs_imsi_bcd_is_valid().
+ * Other types retain structural validation only. NULL returns false.
+ */
+bool ogs_supi_is_valid(const char *supi);
 int ogs_supi_to_imsi_bcd(
         const char *supi, char *imsi_bcd, bool *imsi_supi);
 
@@ -832,7 +838,7 @@ ED3(uint8_t ext:1;,
 } ogs_pco_t;
 
 int ogs_pco_parse(ogs_pco_t *pco, unsigned char *data, int data_len);
-int ogs_pco_build(unsigned char *data, int data_len, ogs_pco_t *pco);
+int ogs_pco_build(unsigned char *data, unsigned int data_len, const ogs_pco_t *pco);
 
 /*
  * PFCP Specification
@@ -1191,6 +1197,8 @@ typedef struct ogs_trigger_point_s {
 typedef struct ogs_application_server_s {
     const char *server_name;
     int        default_handling;
+    bool       include_register_request;
+    bool       include_register_response;
 } ogs_application_server_t;
 
 /**************************************************

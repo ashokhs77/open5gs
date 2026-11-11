@@ -40,6 +40,7 @@ void sepp_state_operational(ogs_fsm_t *s, sepp_event_t *e)
     int rv;
 
     sepp_node_t *sepp_node = NULL;
+    bool node_allocation_failed = false;
 
     ogs_sbi_stream_t *stream = NULL;
     ogs_pool_id_t stream_id = OGS_INVALID_POOL_ID;
@@ -183,9 +184,10 @@ void sepp_state_operational(ogs_fsm_t *s, sepp_event_t *e)
                         if (!sepp_node) {
                             sepp_node = sepp_node_add(
                                 message.SecNegotiateReqData->sender);
-                            ogs_assert(sepp_node);
-
-                            sepp_handshake_fsm_init(sepp_node, false);
+                            if (!sepp_node)
+                                node_allocation_failed = true;
+                            else
+                                sepp_handshake_fsm_init(sepp_node, false);
                         }
                     }
                     break;
@@ -210,11 +212,22 @@ void sepp_state_operational(ogs_fsm_t *s, sepp_event_t *e)
             END
 
             if (!sepp_node) {
-                ogs_error("Not found [%s]", message.h.method);
-                ogs_assert(true ==
-                    ogs_sbi_server_send_error(
-                        stream, OGS_SBI_HTTP_STATUS_NOT_FOUND,
-                        &message, "Not found", message.h.method, NULL));
+                if (node_allocation_failed) {
+                    ogs_error("Cannot allocate SEPP peer context [%s]",
+                            message.SecNegotiateReqData->sender);
+                    ogs_assert(true ==
+                        ogs_sbi_server_send_error(stream,
+                            OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                            &message, "Insufficient resources",
+                            "Cannot allocate SEPP peer context",
+                            "INSUFFICIENT_RESOURCES"));
+                } else {
+                    ogs_error("Not found [%s]", message.h.method);
+                    ogs_assert(true ==
+                        ogs_sbi_server_send_error(
+                            stream, OGS_SBI_HTTP_STATUS_NOT_FOUND,
+                            &message, "Not found", message.h.method, NULL));
+                }
                 break;
             }
 
@@ -271,26 +284,7 @@ void sepp_state_operational(ogs_fsm_t *s, sepp_event_t *e)
                 nf_instance = e->h.sbi.data;
                 ogs_assert(nf_instance);
 
-    /*
-     * Guard against dispatching to an FSM that may have been finalized
-     * by an asynchronous shutdown triggered by SIGTERM.
-     *
-     * In init.c’s event_termination(), which can be invoked asynchronously
-     * when the process receives SIGTERM, we iterate over all NF instances:
-     *     ogs_list_for_each(&ogs_sbi_self()->nf_instance_list, nf_instance)
-     *         ogs_sbi_nf_fsm_fini(nf_instance);
-     * and call ogs_fsm_fini() on each instance’s FSM. That finalizes the FSM
-     * and its state is reset to zero.
-     *
-     * After event_termination(), any incoming SBI response—such as an NRF
-     * client callback arriving after deregistration—would otherwise be
-     * dispatched into a dead FSM and trigger an assertion failure.
-     *
-     * To avoid this, we check OGS_FSM_STATE(&nf_instance->sm):
-     *   - If non-zero, the FSM is still active and can safely handle the event.
-     *   - If zero, the FSM has already been finalized by event_termination(),
-     *     so we log and drop the event to allow graceful shutdown.
-     */
+                /* Dispatch only while the NF instance FSM is active. */
                 old_state = OGS_FSM_STATE(&nf_instance->sm);
                 if (old_state) {
                     e->h.sbi.message = &message;

@@ -137,6 +137,7 @@ ogs_sbi_request_t *ausf_nudm_ueau_build_auth_removal_ind(
     message.h.service.name =
         OpenAPI_service_name_ToString(OpenAPI_service_name_nudm_ueau);
     message.h.api.version = (char *)OGS_SBI_API_V1;
+    message.h.uri = ausf_ue->auth_event.resource_uri;
     message.h.resource.component[0] = ausf_ue->supi;
     message.h.resource.component[1] = (char *)OGS_SBI_RESOURCE_NAME_AUTH_EVENTS;
 

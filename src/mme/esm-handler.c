@@ -130,11 +130,17 @@ int esm_handle_pdn_connectivity_request(
             &req->request_type, sizeof(sess->ue_request_type));
 
     security_protected_required = 0;
-    if (req->presencemask &
-        OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST_ESM_INFORMATION_TRANSFER_FLAG_PRESENT) {
+    /*
+     * TS 24.301 6.6.1.2.1 and 8.3.20.2: the ESM information request
+     * procedure is used during the attach procedure only, so ignore
+     * the ESM information transfer flag in a standalone request.
+     */
+    if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST &&
+        (req->presencemask &
+        OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST_ESM_INFORMATION_TRANSFER_FLAG_PRESENT)) {
         ogs_nas_esm_information_transfer_flag_t *esm_information_transfer_flag =
             &req->esm_information_transfer_flag;
-        security_protected_required =
+        security_protected_required = 
                 esm_information_transfer_flag->security_protected_required;
         ogs_debug("    EIT(ESM information transfer)[%d]",
                 security_protected_required);
@@ -410,6 +416,7 @@ int esm_handle_bearer_resource_allocation_request(
 int esm_handle_bearer_resource_modification_request(
         enb_ue_t *enb_ue, mme_bearer_t *bearer, ogs_nas_eps_message_t *message)
 {
+    int r;
     mme_ue_t *mme_ue = NULL;
 
     if (!bearer) {
@@ -420,6 +427,29 @@ int esm_handle_bearer_resource_modification_request(
     if (!mme_ue) {
         ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
+    }
+
+    /*
+     * TS 24.301 9.9.4.15: the Traffic flow aggregate description is
+     * M LV 2-256, so it cannot be empty, and an empty TAD cannot be
+     * encoded in the Bearer Resource Command.
+     * Reject it with ESM cause #96 as in TS 24.301 7.5.3 h. The UE
+     * ignores a reject with an unassigned PTI (TS 24.301 7.3.1),
+     * so such a request is only dropped.
+     */
+    if (message->esm.bearer_resource_modification_request.
+            traffic_flow_aggregate.length == 0) {
+        ogs_error("[%s] Empty Traffic flow aggregate description",
+                mme_ue->imsi_bcd);
+        if (message->esm.h.procedure_transaction_identity ==
+                OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED)
+            return OGS_ERROR;
+        r = nas_eps_send_bearer_resource_modification_reject(
+                mme_ue, message->esm.h.procedure_transaction_identity,
+                OGS_NAS_ESM_CAUSE_INVALID_MANDATORY_INFORMATION);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return OGS_ERROR;
     }
 
     ogs_assert(OGS_OK ==

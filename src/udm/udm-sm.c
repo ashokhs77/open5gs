@@ -40,6 +40,7 @@ void udm_state_operational(ogs_fsm_t *s, udm_event_t *e)
     int service_name_id = OpenAPI_service_name_NULL;
     const char *api_version = NULL;
     char *supi = NULL;
+    bool ue_allocation_failed = false;
     int psi = OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED;
 
     ogs_sbi_stream_t *stream = NULL;
@@ -182,34 +183,71 @@ void udm_state_operational(ogs_fsm_t *s, udm_event_t *e)
             if (!udm_ue) {
                 supi = ogs_supi_from_supi_or_suci(
                     message.h.resource.component[0]);
+                if (supi && ogs_supi_is_valid(supi) == false) {
+                    ogs_error("Invalid SUPI [%s]", supi);
+                    ogs_assert(true ==
+                        ogs_sbi_server_send_error(stream,
+                            OGS_SBI_HTTP_STATUS_BAD_REQUEST, &message,
+                            "Invalid SUPI", supi, NULL));
+                    ogs_free(supi);
+                    break;
+                }
                 if (supi) {
                     udm_ue = udm_ue_find_by_supi(supi);
                 }
-                ogs_free(supi);
-                if (!udm_ue) {
+                if (supi && !udm_ue) {
                     SWITCH(message.h.method)
                     CASE(OGS_SBI_HTTP_METHOD_POST)
                     CASE(OGS_SBI_HTTP_METHOD_GET)
                         udm_ue = udm_ue_add(message.h.resource.component[0]);
-                        if (!udm_ue) {
-                            ogs_error("Invalid Request [%s]",
-                                    message.h.resource.component[0]);
-                        }
+                        if (!udm_ue)
+                            ue_allocation_failed = true;
                         break;
 
                     DEFAULT
                         ogs_error("Invalid HTTP method [%s]", message.h.method);
                     END
                 }
+                ogs_free(supi);
             }
 
             if (!udm_ue) {
-                ogs_error("Not found [%s]", message.h.method);
-                ogs_assert(true ==
-                    ogs_sbi_server_send_error(stream,
-                        OGS_SBI_HTTP_STATUS_NOT_FOUND,
-                        &message, "Not found", message.h.method, NULL));
+                if (ue_allocation_failed) {
+                    ogs_error("Cannot allocate UDM UE context [%s]",
+                            message.h.resource.component[0]);
+                    ogs_assert(true ==
+                        ogs_sbi_server_send_error(stream,
+                            OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                            &message, "Insufficient resources",
+                            "Cannot allocate UE context",
+                            "INSUFFICIENT_RESOURCES"));
+                } else {
+                    ogs_error("Not found [%s]", message.h.method);
+                    ogs_assert(true ==
+                        ogs_sbi_server_send_error(stream,
+                            OGS_SBI_HTTP_STATUS_NOT_FOUND,
+                            &message, "Not found", message.h.method, NULL));
+                }
                 break;
+            }
+
+            if (service_name_id == OpenAPI_service_name_nudm_ueau &&
+                message.h.resource.component[1] &&
+                !strcmp(message.h.resource.component[1],
+                    OGS_SBI_RESOURCE_NAME_AUTH_EVENTS) &&
+                !strcmp(message.h.method, OGS_SBI_HTTP_METHOD_PUT)) {
+                if (!message.h.resource.component[2] ||
+                    strcmp(message.h.resource.component[2], udm_ue->ctx_id) ||
+                    strcmp(message.h.resource.component[0], udm_ue->supi) ||
+                    !udm_ue->auth_event) {
+                    ogs_error("[%s] Authentication event not found",
+                        message.h.resource.component[0]);
+                    ogs_assert(true == ogs_sbi_server_send_error(stream,
+                        OGS_SBI_HTTP_STATUS_NOT_FOUND, &message,
+                        "Authentication event not found",
+                        message.h.resource.component[0], NULL));
+                    break;
+                }
             }
 
             SWITCH(message.h.resource.component[2])
@@ -239,7 +277,17 @@ void udm_state_operational(ogs_fsm_t *s, udm_event_t *e)
                 sess = udm_sess_find_by_psi(udm_ue, psi);
                 if (!sess) {
                     sess = udm_sess_add(udm_ue, psi);
-                    ogs_assert(sess);
+                    if (!sess) {
+                        ogs_error("[%s:%d] Cannot allocate UDM session context",
+                                udm_ue->supi, psi);
+                        ogs_assert(true ==
+                            ogs_sbi_server_send_error(stream,
+                                OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                                &message, "Insufficient resources",
+                                "Cannot allocate session context",
+                                "INSUFFICIENT_RESOURCES"));
+                        break;
+                    }
                     ogs_debug("[%s:%d] UDM session added",
                             udm_ue->supi, sess->psi);
                 }
@@ -320,26 +368,7 @@ void udm_state_operational(ogs_fsm_t *s, udm_event_t *e)
                 nf_instance = e->h.sbi.data;
                 ogs_assert(nf_instance);
 
-    /*
-     * Guard against dispatching to an FSM that may have been finalized
-     * by an asynchronous shutdown triggered by SIGTERM.
-     *
-     * In init.c’s event_termination(), which can be invoked asynchronously
-     * when the process receives SIGTERM, we iterate over all NF instances:
-     *     ogs_list_for_each(&ogs_sbi_self()->nf_instance_list, nf_instance)
-     *         ogs_sbi_nf_fsm_fini(nf_instance);
-     * and call ogs_fsm_fini() on each instance’s FSM. That finalizes the FSM
-     * and its state is reset to zero.
-     *
-     * After event_termination(), any incoming SBI response—such as an NRF
-     * client callback arriving after deregistration—would otherwise be
-     * dispatched into a dead FSM and trigger an assertion failure.
-     *
-     * To avoid this, we check OGS_FSM_STATE(&nf_instance->sm):
-     *   - If non-zero, the FSM is still active and can safely handle the event.
-     *   - If zero, the FSM has already been finalized by event_termination(),
-     *     so we log and drop the event to allow graceful shutdown.
-     */
+                /* Dispatch only while the NF instance FSM is active. */
                 if (OGS_FSM_STATE(&nf_instance->sm)) {
                     e->h.sbi.message = &message;
                     ogs_fsm_dispatch(&nf_instance->sm, e);

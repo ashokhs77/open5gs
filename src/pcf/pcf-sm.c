@@ -61,6 +61,9 @@ void pcf_state_operational(ogs_fsm_t *s, pcf_event_t *e)
     pcf_sess_t *sess = NULL;
     ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
     pcf_app_t *app_session = NULL;
+    bool am_ue_allocation_failed = false;
+    bool sm_context_allocation_failed = false;
+    bool sm_ue_created = false;
 
     pcf_sm_debug(e);
 
@@ -141,8 +144,19 @@ void pcf_state_operational(ogs_fsm_t *s, pcf_event_t *e)
             break;
 
         case OpenAPI_service_name_npcf_am_policy_control:
-            /* Reject an oversized list before finding or creating UE state. */
             PolicyAssociationRequest = message.PolicyAssociationRequest;
+            if (!strcmp(message.h.method, OGS_SBI_HTTP_METHOD_POST) &&
+                PolicyAssociationRequest &&
+                ogs_supi_is_valid(PolicyAssociationRequest->supi) == false) {
+                ogs_error("Invalid SUPI");
+                ogs_assert(true ==
+                    ogs_sbi_server_send_error(stream,
+                        OGS_SBI_HTTP_STATUS_BAD_REQUEST, &message,
+                        "Invalid SUPI", NULL, NULL));
+                break;
+            }
+
+            /* Reject an oversized list before finding or creating UE state. */
             if (PolicyAssociationRequest &&
                 PolicyAssociationRequest->allowed_snssais &&
                 PolicyAssociationRequest->allowed_snssais->count >
@@ -166,7 +180,8 @@ void pcf_state_operational(ogs_fsm_t *s, pcf_event_t *e)
                     if (!pcf_ue_am) {
                         pcf_ue_am = pcf_ue_am_add(
                             message.PolicyAssociationRequest->supi);
-                        ogs_assert(pcf_ue_am);
+                        if (!pcf_ue_am)
+                            am_ue_allocation_failed = true;
                     }
                 }
                 break;
@@ -182,11 +197,22 @@ void pcf_state_operational(ogs_fsm_t *s, pcf_event_t *e)
             END
 
             if (!pcf_ue_am) {
-                ogs_error("Not found [%s]", message.h.method);
-                ogs_assert(true ==
-                    ogs_sbi_server_send_error(stream,
-                    OGS_SBI_HTTP_STATUS_NOT_FOUND,
-                    &message, "Not found", message.h.method, NULL));
+                if (am_ue_allocation_failed) {
+                    ogs_error("Cannot allocate PCF AM UE context [%s]",
+                            message.PolicyAssociationRequest->supi);
+                    ogs_assert(true ==
+                        ogs_sbi_server_send_error(stream,
+                            OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                            &message, "Insufficient resources",
+                            "Cannot allocate AM UE context",
+                            "INSUFFICIENT_RESOURCES"));
+                } else {
+                    ogs_error("Not found [%s]", message.h.method);
+                    ogs_assert(true ==
+                        ogs_sbi_server_send_error(stream,
+                            OGS_SBI_HTTP_STATUS_NOT_FOUND,
+                            &message, "Not found", message.h.method, NULL));
+                }
                 break;
             }
 
@@ -221,6 +247,15 @@ void pcf_state_operational(ogs_fsm_t *s, pcf_event_t *e)
                             break;
                         }
 
+                        if (ogs_supi_is_valid(
+                                message.SmPolicyContextData->supi) == false) {
+                            ogs_error("[%s:%d] Invalid SUPI",
+                                    message.SmPolicyContextData->supi,
+                                    message.SmPolicyContextData->
+                                        pdu_session_id);
+                            break;
+                        }
+
                         pcf_ue_sm = pcf_ue_sm_find_by_supi(
                                     message.SmPolicyContextData->supi);
                         if (!pcf_ue_sm) {
@@ -229,16 +264,14 @@ void pcf_state_operational(ogs_fsm_t *s, pcf_event_t *e)
                                 pcf_ue_sm = pcf_ue_sm_add(
                                             message.SmPolicyContextData->supi);
                                 if (!pcf_ue_sm) {
-                                    ogs_error("[%s:%d] Invalid Request [%s]",
-                                            message.SmPolicyContextData->supi,
-                                            message.SmPolicyContextData->
-                                                pdu_session_id,
-                                            message.h.method);
-                                } else
+                                    sm_context_allocation_failed = true;
+                                } else {
+                                    sm_ue_created = true;
                                     ogs_debug("[%s:%d] PCF UE added",
                                         message.SmPolicyContextData->supi,
                                         message.SmPolicyContextData->
                                             pdu_session_id);
+                                }
                             } else {
                                 ogs_error("[%s:%d] Invalid HTTP method [%s]",
                                         message.SmPolicyContextData->supi,
@@ -257,13 +290,7 @@ void pcf_state_operational(ogs_fsm_t *s, pcf_event_t *e)
                                     sess = pcf_sess_add(pcf_ue_sm, message.
                                         SmPolicyContextData->pdu_session_id);
                                     if (!sess) {
-                                        ogs_error("[%s:%d] "
-                                                "Invalid Request [%s]",
-                                                message.SmPolicyContextData->
-                                                    supi,
-                                                message.SmPolicyContextData->
-                                                    pdu_session_id,
-                                                message.h.method);
+                                        sm_context_allocation_failed = true;
                                     } else
                                         ogs_debug("[%s:%d] PCF session added",
                                                     pcf_ue_sm->supi, sess->psi);
@@ -287,20 +314,35 @@ void pcf_state_operational(ogs_fsm_t *s, pcf_event_t *e)
             DEFAULT
             END
             if (!sess) {
-                ogs_error("Not found [%s]", message.h.uri);
-            /*
-             * TS29.512
-             * 4.2.2.2 SM Policy Association establishment
-             *
-             * If the user information received within the "supi" attribute is
-             * unknown, the PCF shall reject the request with an HTTP "400 Bad
-             * Request" response message including the "cause" attribute
-             * of the ProblemDetails data structure set to "USER_UNKNOWN".
-             */
-                ogs_assert(true ==
-                    ogs_sbi_server_send_error(stream,
-                        OGS_SBI_HTTP_STATUS_BAD_REQUEST,
-                        &message, "Not found", message.h.uri, "USER_UNKNOWN"));
+                if (sm_ue_created)
+                    pcf_ue_sm_remove(pcf_ue_sm);
+                if (sm_context_allocation_failed) {
+                    ogs_error("[%s:%d] Cannot allocate PCF SM context",
+                            message.SmPolicyContextData->supi,
+                            message.SmPolicyContextData->pdu_session_id);
+                    ogs_assert(true ==
+                        ogs_sbi_server_send_error(stream,
+                            OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                            &message, "Insufficient resources",
+                            "Cannot allocate SM context",
+                            "INSUFFICIENT_RESOURCES"));
+                } else {
+                    ogs_error("Not found [%s]", message.h.uri);
+                /*
+                 * TS29.512
+                 * 4.2.2.2 SM Policy Association establishment
+                 *
+                 * If the user information received within the "supi" attribute
+                 * is unknown, the PCF shall reject the request with an HTTP
+                 * "400 Bad Request" response message including the "cause"
+                 * attribute of ProblemDetails set to "USER_UNKNOWN".
+                 */
+                    ogs_assert(true ==
+                        ogs_sbi_server_send_error(stream,
+                            OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                            &message, "Not found",
+                            message.h.uri, "USER_UNKNOWN"));
+                }
                 break;
             }
 
@@ -413,26 +455,7 @@ void pcf_state_operational(ogs_fsm_t *s, pcf_event_t *e)
                 nf_instance = e->h.sbi.data;
                 ogs_assert(nf_instance);
 
-    /*
-     * Guard against dispatching to an FSM that may have been finalized
-     * by an asynchronous shutdown triggered by SIGTERM.
-     *
-     * In init.c’s event_termination(), which can be invoked asynchronously
-     * when the process receives SIGTERM, we iterate over all NF instances:
-     *     ogs_list_for_each(&ogs_sbi_self()->nf_instance_list, nf_instance)
-     *         ogs_sbi_nf_fsm_fini(nf_instance);
-     * and call ogs_fsm_fini() on each instance’s FSM. That finalizes the FSM
-     * and its state is reset to zero.
-     *
-     * After event_termination(), any incoming SBI response—such as an NRF
-     * client callback arriving after deregistration—would otherwise be
-     * dispatched into a dead FSM and trigger an assertion failure.
-     *
-     * To avoid this, we check OGS_FSM_STATE(&nf_instance->sm):
-     *   - If non-zero, the FSM is still active and can safely handle the event.
-     *   - If zero, the FSM has already been finalized by event_termination(),
-     *     so we log and drop the event to allow graceful shutdown.
-     */
+                /* Dispatch only while the NF instance FSM is active. */
                 if (OGS_FSM_STATE(&nf_instance->sm)) {
                     e->h.sbi.message = &message;
                     ogs_fsm_dispatch(&nf_instance->sm, e);

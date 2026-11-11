@@ -345,7 +345,7 @@ void smf_gx_send_ccr(smf_sess_t *sess, ogs_pool_id_t xact_id,
         ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp);
         ogs_assert(ret == 0);
     }
-
+    
     if (cc_request_type != OGS_DIAM_GX_CC_REQUEST_TYPE_TERMINATION_REQUEST) {
         /* Set Supported-Features */
         ret = fd_msg_avp_new(ogs_diam_gx_supported_features, 0, &avp);

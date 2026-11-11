@@ -111,12 +111,27 @@ bool udm_nudm_ueau_handle_get(
             return false;
         }
 
-        ogs_ascii_to_hex(
-            ResynchronizationInfo->rand, strlen(ResynchronizationInfo->rand),
-            rand, sizeof(rand));
-        ogs_ascii_to_hex(
-            ResynchronizationInfo->auts, strlen(ResynchronizationInfo->auts),
-            auts, sizeof(auts));
+        if (ogs_hex_from_string_checked(
+                ResynchronizationInfo->rand, rand, sizeof(rand)) != OGS_OK) {
+            ogs_error("[%s] Invalid ResynchronizationInfo.rand",
+                    udm_ue->suci);
+            ogs_assert(true ==
+                ogs_sbi_server_send_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST, recvmsg,
+                    "Invalid ResynchronizationInfo.rand", udm_ue->suci, NULL));
+            return false;
+        }
+
+        if (ogs_hex_from_string_checked(
+                ResynchronizationInfo->auts, auts, sizeof(auts)) != OGS_OK) {
+            ogs_error("[%s] Invalid ResynchronizationInfo.auts",
+                    udm_ue->suci);
+            ogs_assert(true ==
+                ogs_sbi_server_send_error(stream,
+                    OGS_SBI_HTTP_STATUS_BAD_REQUEST, recvmsg,
+                    "Invalid ResynchronizationInfo.auts", udm_ue->suci, NULL));
+            return false;
+        }
 
         if (memcmp(udm_ue->rand, rand, OGS_RAND_LEN) != 0) {
             ogs_error("[%s] Invalid RAND", udm_ue->suci);
@@ -207,14 +222,6 @@ bool udm_nudm_ueau_handle_result_confirmation_inform(
         return false;
     }
 
-    if (!AuthEvent->success) {
-        ogs_error("[%s] No success", udm_ue->suci);
-        ogs_assert(true ==
-            ogs_sbi_server_send_error(stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
-                message, "No success", udm_ue->suci, NULL));
-        return false;
-    }
-
     if (!AuthEvent->time_stamp) {
         ogs_error("[%s] No timeStamp", udm_ue->suci);
         ogs_assert(true ==
@@ -236,6 +243,30 @@ bool udm_nudm_ueau_handle_result_confirmation_inform(
         ogs_assert(true ==
             ogs_sbi_server_send_error(stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
                 message, "No servingNetworkName", udm_ue->suci, NULL));
+        return false;
+    }
+
+    if (!strcmp(message->h.method, OGS_SBI_HTTP_METHOD_POST)) {
+        if (message->h.resource.component[2] ||
+            AuthEvent->auth_removal_ind) {
+            ogs_error("[%s] Invalid authentication confirmation", udm_ue->suci);
+            ogs_assert(true == ogs_sbi_server_send_error(stream,
+                OGS_SBI_HTTP_STATUS_BAD_REQUEST, message,
+                "Invalid authentication confirmation", udm_ue->suci, NULL));
+            return false;
+        }
+    } else if (!strcmp(message->h.method, OGS_SBI_HTTP_METHOD_PUT)) {
+        if (!AuthEvent->auth_removal_ind || AuthEvent->success) {
+            ogs_error("[%s] Invalid authentication removal", udm_ue->suci);
+            ogs_assert(true == ogs_sbi_server_send_error(stream,
+                OGS_SBI_HTTP_STATUS_BAD_REQUEST, message,
+                "Invalid authentication removal", udm_ue->suci, NULL));
+            return false;
+        }
+    } else {
+        ogs_assert(true == ogs_sbi_server_send_error(stream,
+            OGS_SBI_HTTP_STATUS_METHOD_NOT_ALLOWED, message,
+            "Invalid HTTP method", message->h.method, NULL));
         return false;
     }
 

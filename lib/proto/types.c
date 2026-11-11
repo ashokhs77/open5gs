@@ -526,19 +526,39 @@ bool ogs_imeisv_bcd_is_valid(const char *imeisv_bcd)
     return ogs_bcd_string_is_valid(imeisv_bcd, OGS_MAX_IMEISV_BCD_LEN);
 }
 
+bool ogs_supi_is_valid(const char *supi)
+{
+    bool valid = true;
+    char *type = NULL, *value = NULL;
+
+    if (!supi) {
+        ogs_warn("Missing SUPI");
+        return false;
+    }
+
+    if (ogs_id_get_type_value(supi, &type, &value) == false)
+        return false;
+
+    if (strcmp(type, OGS_ID_SUPI_TYPE_IMSI) == 0)
+        valid = ogs_imsi_bcd_is_valid(value);
+
+    ogs_free(type);
+    ogs_free(value);
+
+    return valid;
+}
+
 /*
  * Return the decimal IMSI string only for IMSI-type SUPI.  Other SUPI
  * types cannot be used as EPC IMSI keys and remain SUPI-only.
  *
- * Return OGS_ERROR only when the SUPI claims to be IMSI-type but the
- * IMSI payload is malformed.  That must not fall back to SUPI-only.
+ * Return OGS_ERROR for malformed SUPIs. On failure or for a non-IMSI
+ * SUPI, leave imsi_bcd untouched and set imsi_supi to false.
  */
 int ogs_supi_to_imsi_bcd(
         const char *supi, char *imsi_bcd, bool *imsi_supi)
 {
-    int rv = OGS_ERROR;
-    char *type = NULL;
-    char *value = NULL;
+    const size_t imsi_prefix_len = sizeof(OGS_ID_SUPI_TYPE_IMSI "-") - 1;
 
     ogs_assert(supi);
     ogs_assert(imsi_bcd);
@@ -546,33 +566,21 @@ int ogs_supi_to_imsi_bcd(
 
     *imsi_supi = false;
 
-    if (ogs_id_get_type_value(supi, &type, &value) == false) {
+    if (ogs_supi_is_valid(supi) == false) {
         ogs_error("Invalid SUPI [%s]", supi);
-        goto cleanup;
+        return OGS_ERROR;
     }
 
     /* Non-IMSI SUPI is valid, but has no EPC IMSI alias. */
-    if (strcmp(type, OGS_ID_SUPI_TYPE_IMSI) != 0) {
-        rv = OGS_OK;
-        goto cleanup;
-    }
+    if (strncmp(supi, OGS_ID_SUPI_TYPE_IMSI "-", imsi_prefix_len) != 0)
+        return OGS_OK;
 
-    if (ogs_imsi_bcd_is_valid(value) == false) {
-        ogs_error("Invalid IMSI SUPI [%s]", supi);
-        goto cleanup;
-    }
-
-    ogs_cpystrn(imsi_bcd, value, OGS_MAX_IMSI_BCD_LEN+1);
+    /* Validation bounds the IMSI length; allow overlapping input/output. */
+    memmove(imsi_bcd, supi + imsi_prefix_len,
+            strlen(supi + imsi_prefix_len) + 1);
     *imsi_supi = true;
-    rv = OGS_OK;
 
-cleanup:
-    if (type)
-        ogs_free(type);
-    if (value)
-        ogs_free(value);
-
-    return rv;
+    return OGS_OK;
 }
 
 char *ogs_s_nssai_sd_to_string(const ogs_uint24_t sd)
@@ -735,7 +743,6 @@ int ogs_fqdn_parse(char *dst, const char *src, int length)
  * 10.5.6.3 Protocol configuration options in 3GPP TS 24.008 */
 int ogs_pco_parse(ogs_pco_t *pco, unsigned char *data, int data_len)
 {
-    ogs_pco_t *source = (ogs_pco_t *)data;
     int size = 0;
     int i = 0;
 
@@ -750,8 +757,8 @@ int ogs_pco_parse(ogs_pco_t *pco, unsigned char *data, int data_len)
         return -EINVAL;
     }
 
-    pco->ext = source->ext;
-    pco->configuration_protocol = source->configuration_protocol;
+    pco->ext = *data >> 7;
+    pco->configuration_protocol = *data & 0x7;
     size++;
 
     while(size < data_len && i < OGS_MAX_NUM_OF_PROTOCOL_OR_CONTAINER_ID) {
@@ -799,38 +806,38 @@ int ogs_pco_parse(ogs_pco_t *pco, unsigned char *data, int data_len)
 
     return size;
 }
-int ogs_pco_build(unsigned char *data, int data_len, ogs_pco_t *pco)
+int ogs_pco_build(unsigned char *data, unsigned int data_len, const ogs_pco_t *pco)
 {
-    ogs_pco_t target;
-    int size = 0;
-    int i = 0;
+    unsigned int i;
+    unsigned int size;
 
     ogs_assert(pco);
     ogs_assert(data);
-    ogs_assert(data_len);
 
-    memcpy(&target, pco, sizeof(ogs_pco_t));
+    if (data_len < 1)
+        return -ENOBUFS;
 
-    ogs_assert(size + 1 <= data_len);
-    memcpy(data + size, &target, 1);
-    size += 1;
+    memcpy(data, pco, 1);
+    size = 1;
 
-    ogs_assert(target.num_of_id <= OGS_MAX_NUM_OF_PROTOCOL_OR_CONTAINER_ID);
-    for (i = 0; i < target.num_of_id; i++) {
-        ogs_pco_id_t *id = &target.ids[i];
+    ogs_assert(pco->num_of_id <= OGS_MAX_NUM_OF_PROTOCOL_OR_CONTAINER_ID);
+    for (i = 0; i < pco->num_of_id; i++) {
+        const ogs_pco_id_t *id = &pco->ids[i];
+        const uint16_t id_val = htobe16(id->id);
 
-        ogs_assert(size + sizeof(id->id) <= data_len);
-        id->id = htobe16(id->id);
-        memcpy(data + size, &id->id, sizeof(id->id));
-        size += sizeof(id->id);
+        if (size + sizeof(id_val) + sizeof(id->len) + id->len > data_len)
+            return -ENOBUFS;
 
-        ogs_assert(size + sizeof(id->len) <= data_len);
+        memcpy(data + size, &id_val, sizeof(id_val));
+        size += sizeof(id_val);
+
         memcpy(data + size, &id->len, sizeof(id->len));
         size += sizeof(id->len);
 
-        ogs_assert(size + id->len <= data_len);
-        memcpy(data + size, id->data, id->len);
-        size += id->len;
+        if (id->len > 0) {
+            memcpy(data + size, id->data, id->len);
+            size += id->len;
+        }
     }
 
     return size;

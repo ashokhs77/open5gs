@@ -3823,6 +3823,23 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
             ogs_assert(true == ogs_sbi_send_http_status_no_content(stream));
             break;
 
+        case OpenAPI_n2_sm_info_type_PDU_RES_MOD_RSP:
+            /*
+             * Some gNBs answer PDUSessionResourceReleaseCommand with
+             * PDUSessionResourceModifyResponse. It used to be dropped
+             * here without any HTTP response, so the AMF waited for
+             * its 10 second SBI timer and then returned 5GMM status
+             * to the UE, and N2 was never marked as released.
+             *
+             * The release has already been commanded in this state,
+             * so handle it as the N2 release response.
+             */
+            ogs_warn("[%s:%d] PDUSessionResourceModifyResponse "
+                    "while waiting for N1/N2 release - "
+                    "handled as release response",
+                    smf_ue->supi, sess->psi);
+            /* FALLTHROUGH */
+
         case OpenAPI_n2_sm_info_type_PDU_RES_REL_RSP:
             ngap_state = sess->ngap_state.pdu_session_resource_release;
 
