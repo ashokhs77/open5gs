@@ -3838,7 +3838,7 @@ void smf_gsm_state_wait_5gc_n1_n2_release(ogs_fsm_t *s, smf_event_t *e)
                     "while waiting for N1/N2 release - "
                     "handled as release response",
                     smf_ue->supi, sess->psi);
-            /* FALLTHROUGH */
+            OGS_GNUC_FALLTHROUGH;
 
         case OpenAPI_n2_sm_info_type_PDU_RES_REL_RSP:
             ngap_state = sess->ngap_state.pdu_session_resource_release;
