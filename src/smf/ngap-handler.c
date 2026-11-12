@@ -552,10 +552,18 @@ int ngap_handle_pdu_session_resource_modify_response_transfer(
     }
 
     if (ogs_list_count(&sess->qos_flow_to_modify_list) == 0) {
-        ogs_error("[%s:%d] No QoS flow", smf_ue->supi, sess->psi);
-        smf_sbi_send_sm_context_update_error_log(
-                stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
-                "No QoS flow", smf_ue->supi);
+        /*
+         * Some gNBs acknowledge a QoS flow RELEASE by listing the released
+         * QFI in qosFlowAddOrModifyResponseList instead of omitting the
+         * list. The flow is already gone from the session at this point, so
+         * nothing is left to modify. Treat it like the standard release
+         * reply above; raising an error here made the state machine drop
+         * the whole PDU session (IMS session lost after every VoNR call).
+         */
+        ogs_warn("[%s:%d] No QoS flow to modify - "
+                "handled as QoS flow release", smf_ue->supi, sess->psi);
+        rv = OGS_OK;
+        ogs_assert(true == ogs_sbi_send_http_status_no_content(stream));
         goto cleanup;
     }
 
