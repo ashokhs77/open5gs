@@ -5540,13 +5540,29 @@ void ngap_handle_error_indication(amf_gnb_t *gnb, ogs_ngap_message_t *message)
         }
 
         ran_ue = ran_ue_find_by_amf_ue_ngap_id(amf_ue_ngap_id);
-        if (!ran_ue)
+        if (!ran_ue) {
             ogs_warn("No RAN UE Context : AMF_UE_NGAP_ID[%lld]",
                     (long long)amf_ue_ngap_id);
-        else
+        } else if (ran_ue->gnb_id != gnb->id) {
+            /*
+             * AMF_UE_NGAP_ID is unique per AMF, but the UE-associated
+             * logical connection belongs to one gNB (TS 38.413 8.7.5,
+             * 10.6). An ErrorIndication from any other gNB says nothing
+             * about this UE: ignore it rather than releasing a UE that is
+             * served elsewhere. No ErrorIndication is sent back, to avoid
+             * an ErrorIndication loop.
+             */
+            ogs_warn("AMF_UE_NGAP_ID[%lld] does not belong to this gNB "
+                    "[UE:gNB-ID:%llu, Message:gNB-ID:%llu] - ignored",
+                    (long long)amf_ue_ngap_id,
+                    (unsigned long long)ran_ue->gnb_id,
+                    (unsigned long long)gnb->id);
+            ran_ue = NULL;
+        } else {
             ogs_warn("    RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld]",
                     (long long)ran_ue->ran_ue_ngap_id,
                     (long long)ran_ue->amf_ue_ngap_id);
+        }
 
     } else if (RAN_UE_NGAP_ID) {
         ran_ue = ran_ue_find_by_ran_ue_ngap_id(gnb, *RAN_UE_NGAP_ID);
