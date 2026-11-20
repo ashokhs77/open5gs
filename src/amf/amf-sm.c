@@ -555,6 +555,25 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                     sbi_message.res_status == OGS_SBI_HTTP_STATUS_OK) {
                     ogs_info("[%s:%d] Release SM context [%d]",
                             amf_ue->supi, sess->psi, sbi_message.res_status);
+                } else if (sbi_message.res_status ==
+                        OGS_SBI_HTTP_STATUS_NOT_FOUND) {
+                    /*
+                     * The SMF no longer has this SM context (e.g. the SMF
+                     * restarted and lost every session). The release was
+                     * asked for so that the context is gone, and it is:
+                     * treat it as released and carry on.
+                     *
+                     * This used to fail an initial registration of a UE
+                     * that still had PDU sessions in the AMF
+                     * (AMF_RELEASE_SM_CONTEXT_AUTHENTICATED_REGISTRATION):
+                     * the UE got Registration Reject #7 (5GS services not
+                     * allowed) and, since the stale session stayed, every
+                     * retry failed the same way - after an SMF restart,
+                     * such UEs could not register again.
+                     */
+                    ogs_warn("[%s:%d] SM context already gone at the SMF "
+                            "[404] - released locally",
+                            amf_ue->supi, sess->psi);
                 } else {
                     ogs_error("[%s:%d] HTTP response error [%d]",
                             amf_ue->supi, sess->psi, sbi_message.res_status);
