@@ -43,8 +43,8 @@ testepc_sources = files('''
 executable('epc',
     sources : [testepc_sources],
     c_args : libtestepc_cc_args,
-    include_directories : srcinc,
-    dependencies : libtestepc_dep)
+    include_directories : [srcinc, incdir_license],
+    dependencies : [libtestepc_dep, license_lib])
 
 libtest5gc_cc_args = '-DDEFAULT_CONFIG_FILENAME="@0@/configs/sample.yaml"'.format(open5gs_build_dir)
 
@@ -71,8 +71,8 @@ test5gc_sources = files('''
 executable('5gc',
     sources : [test5gc_sources],
     c_args : libtest5gc_cc_args,
-    include_directories : srcinc,
-    dependencies : libtest5gc_dep)
+    include_directories : [srcinc, incdir_license],
+    dependencies : [libtest5gc_dep, license_lib])
 
 libtestapp_cc_args = '-DDEFAULT_CONFIG_FILENAME="@0@/configs/sample.yaml"'.format(open5gs_build_dir)
 
@@ -99,5 +99,5 @@ testapp_sources = files('''
 executable('app',
     sources : [testapp_sources],
     c_args : libtestapp_cc_args,
-    include_directories : srcinc,
-    dependencies : libtestapp_dep)
+    include_directories : [srcinc, incdir_license],
+    dependencies : [libtestapp_dep, license_lib],)

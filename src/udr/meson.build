@@ -45,8 +45,8 @@ udr_sources = files('''
 
 executable('open5gs-udrd',
     sources : udr_sources,
-    c_args : '-DDEFAULT_CONFIG_FILENAME="@0@/udr.yaml"'.format(open5gs_sysconfdir),
-    include_directories : srcinc,
-    dependencies : libudr_dep,
+    c_args : ['-DDEFAULT_CONFIG_FILENAME="@0@/udr.yaml"'.format(open5gs_sysconfdir),'-DENABLE_LICENSE_CHECK'],
+    include_directories : [srcinc, incdir_license],
+    dependencies : [libudr_dep, license_lib],
     install_rpath : libdir,
     install : true)
