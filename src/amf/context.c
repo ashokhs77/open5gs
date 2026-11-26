@@ -976,43 +976,11 @@ int amf_context_parse_config(void)
                         ogs_yaml_iter_key(&network_name_iter);
                         ogs_assert(network_name_key);
                         if (!strcmp(network_name_key, "full")) {
-                            ogs_nas_network_name_t *network_full_name =
-                                &self.full_name;
-                            const char *c_network_name =
-                                ogs_yaml_iter_value(&network_name_iter);
-                            uint8_t size = strlen(c_network_name);
-                            uint8_t i;
-                            for (i = 0; i < size &&
-                                 (((i * 2) + 1) <
-                                  (OGS_NAS_MAX_NETWORK_NAME_LEN - 1));
-                                 i++) {
-                                /* Workaround to convert the ASCII to USC-2 */
-                                network_full_name->name[i * 2] = 0;
-                                network_full_name->name[i * 2 + 1] =
-                                    c_network_name[i];
-                            }
-                            network_full_name->length = size*2+1;
-                            network_full_name->coding_scheme = 1;
-                            network_full_name->ext = 1;
+                            ogs_nas_build_network_name(&self.full_name,
+                                ogs_yaml_iter_value(&network_name_iter));
                         } else if (!strcmp(network_name_key, "short")) {
-                            ogs_nas_network_name_t *network_short_name =
-                                &self.short_name;
-                            const char *c_network_name =
-                                ogs_yaml_iter_value(&network_name_iter);
-                            uint8_t size = strlen(c_network_name);
-                            uint8_t i;
-                            for (i = 0; i < size &&
-                                 (((i * 2) + 1) <
-                                  (OGS_NAS_MAX_NETWORK_NAME_LEN - 1));
-                                 i++) {
-                                /* Workaround to convert the ASCII to USC-2 */
-                                network_short_name->name[i * 2] = 0;
-                                network_short_name->name[i * 2 + 1] =
-                                    c_network_name[i];
-                            }
-                            network_short_name->length = size*2+1;
-                            network_short_name->coding_scheme = 1;
-                            network_short_name->ext = 1;
+                            ogs_nas_build_network_name(&self.short_name,
+                                ogs_yaml_iter_value(&network_name_iter));
                         } else
                             ogs_warn("unknown key `%s`", network_name_key);
                     }
@@ -1335,6 +1303,17 @@ amf_gnb_t *amf_gnb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
     return gnb;
 }
 
+void amf_gnb_mark_setup_complete(amf_gnb_t *gnb)
+{
+    ogs_assert(gnb);
+
+    if (gnb->setup_complete)
+        return;
+
+    gnb->setup_complete = true;
+    self.num_of_setup_gnb++;
+}
+
 void amf_gnb_remove(amf_gnb_t *gnb)
 {
     amf_event_t e;
@@ -1342,6 +1321,8 @@ void amf_gnb_remove(amf_gnb_t *gnb)
     ogs_assert(gnb);
     ogs_assert(gnb->sctp.sock);
 
+    if (gnb->setup_complete)
+        self.num_of_setup_gnb--;
     ogs_list_remove(&self.gnb_list, gnb);
 
     memset(&e, 0, sizeof(e));
@@ -1761,7 +1742,8 @@ amf_ue_t *amf_ue_add(ran_ue_t *ran_ue)
     }
     amf_ue->t3550.pkbuf = NULL;
     amf_ue->t3555.timer = ogs_timer_add(
-            ogs_app()->timer_mgr, amf_timer_t3555_expire, amf_ue);
+            ogs_app()->timer_mgr, amf_timer_t3555_expire,
+            OGS_UINT_TO_POINTER(amf_ue->id));
     if (!amf_ue->t3555.timer) {
         ogs_error("ogs_timer_add() failed");
         ogs_pool_id_free(&amf_ue_pool, amf_ue);
@@ -1915,6 +1897,9 @@ void amf_ue_remove(amf_ue_t *amf_ue)
         ogs_sbi_client_remove(amf_ue->data_change_subscription.client);
 
     CLEAR_5G_AKA_CONFIRMATION(amf_ue);
+    CLEAR_5G_AKA_PENDING(amf_ue);
+    if (amf_ue->confirmation_for_5g_aka.confirmed_client)
+        ogs_sbi_client_remove(amf_ue->confirmation_for_5g_aka.confirmed_client);
     if (amf_ue->confirmation_for_5g_aka.client)
         ogs_sbi_client_remove(amf_ue->confirmation_for_5g_aka.client);
 
@@ -2345,23 +2330,14 @@ amf_ue_t *amf_ue_find_by_ue_context_id(char *ue_context_id)
 
 /*
  * Release an OLD amf_ue that collides with a freshly registering amf_ue on
- * one of the UE indexes, moving any session context to the NEW amf_ue.
+ * the SUPI, moving any session context to the NEW amf_ue.
  *
- * Reached from two complementary detection points:
- *
- *   - amf_ue_set_suci(): the UE re-attached re-using the SAME SUCI, so the
- *     old context is found via suci_hash (delete-path collision).
- *
- *   - amf_ue_set_supi(): the UE re-attached with a FRESH SUCI (USIM-toggle,
- *     post-deregistration timer, flight-mode, push-driven re-registration,
- *     PoC radio attach loop), so amf_ue_set_suci() could NOT detect it
- *     (suci_hash miss). The old context is only discovered later, once
- *     AKA-Auth reveals the SUPI and supi_hash still points at the stale
- *     slot. Without this the slot leaks until the mobile-reachable timer
- *     expires (create-path collision).
- *
- * Unifying the two paths here makes them behave identically, mirroring the
- * SMF-side unification of the IMSI/SUPI indexes (commit eeeef3d1b).
+ * Reached from amf_ue_set_supi(), once AKA-Auth has confirmed the SUPI of
+ * the NEW amf_ue, whether the UE re-attached re-using the SAME SUCI (an
+ * Identity Response: amf_ue_set_suci() leaves the old context alone until
+ * then) or with a FRESH SUCI (USIM-toggle, post-deregistration timer,
+ * flight-mode, push-driven re-registration, PoC radio attach loop). Without
+ * this the slot leaks until the mobile-reachable timer expires.
  */
 static void amf_ue_release_old_context(
         amf_ue_t *amf_ue, amf_ue_t *old_amf_ue, const char *display)
@@ -2444,16 +2420,16 @@ void amf_ue_set_suci(amf_ue_t *amf_ue,
     suci = ogs_nas_5gs_suci_from_mobile_identity(mobile_identity);
     ogs_assert(suci);
 
-    /* Check if OLD amf_ue_t is existed */
+    /*
+     * The SUCI is not authenticated yet. If another context has it, that
+     * context keeps the SUCI and its sessions until this one is
+     * authenticated: amf_ue_set_supi() then releases it
+     * (TS 24.501 5.5.1.2.8 f)). The security context of this one was not
+     * set up for that SUCI, so the request is authenticated.
+     */
     old_amf_ue = amf_ue_find_by_suci(suci);
-    if (old_amf_ue) {
-        /* Check if OLD amf_ue_t is different with NEW amf_ue_t */
-        if (ogs_pool_index(&amf_ue_pool, amf_ue) !=
-            ogs_pool_index(&amf_ue_pool, old_amf_ue)) {
-            /* Same-SUCI re-attach: tear the old context down. */
-            amf_ue_release_old_context(amf_ue, old_amf_ue, suci);
-        }
-    }
+    if (old_amf_ue && old_amf_ue != amf_ue)
+        CLEAR_SECURITY_CONTEXT(amf_ue);
 
     if (amf_ue->suci) {
         ogs_hash_unset_if_owner(self.suci_hash,
@@ -2461,7 +2437,9 @@ void amf_ue_set_suci(amf_ue_t *amf_ue,
         ogs_free(amf_ue->suci);
     }
     amf_ue->suci = suci;
-    ogs_hash_set(self.suci_hash, amf_ue->suci, strlen(amf_ue->suci), amf_ue);
+    if (!old_amf_ue || old_amf_ue == amf_ue)
+        ogs_hash_set(self.suci_hash,
+                amf_ue->suci, strlen(amf_ue->suci), amf_ue);
 }
 
 void amf_ue_set_supi(amf_ue_t *amf_ue, char *supi)
@@ -2478,14 +2456,12 @@ void amf_ue_set_supi(amf_ue_t *amf_ue, char *supi)
         /*
          * First SUPI assignment for this amf_ue.
          *
-         * Fresh-SUCI re-attach orphan cleanup (create path): if another
-         * amf_ue already holds this SUPI, it is an orphan from a previous
-         * attach cycle that amf_ue_set_suci() could NOT detect, because the
-         * UE re-attached with a fresh SUCI (suci_hash miss). The delete-path
-         * guard keeps the live entry findable but does not reclaim the stale
-         * slot - without this the pool grows by one slot on every fresh-SUCI
-         * re-registration, until the mobile-reachable timer expires. Tear it
-         * down through the same unified path the same-SUCI re-attach uses.
+         * Re-attach orphan cleanup: if another amf_ue already holds this
+         * SUPI, it is the context of a previous attach cycle, which the UE
+         * reached with the same SUCI (amf_ue_set_suci() leaves it alone
+         * until the authentication) or with a fresh SUCI (suci_hash miss).
+         * Without this the pool grows by one slot on every re-registration,
+         * until the mobile-reachable timer expires.
          */
         amf_ue_t *old_amf_ue = amf_ue_find_by_supi(supi);
         if (old_amf_ue && old_amf_ue != amf_ue)
@@ -2494,6 +2470,11 @@ void amf_ue_set_supi(amf_ue_t *amf_ue, char *supi)
     amf_ue->supi = ogs_strdup(supi);
     ogs_assert(amf_ue->supi);
     ogs_hash_set(self.supi_hash, amf_ue->supi, strlen(amf_ue->supi), amf_ue);
+
+    /* Take the SUCI that amf_ue_set_suci() left to another context */
+    if (amf_ue->suci && !amf_ue_find_by_suci(amf_ue->suci))
+        ogs_hash_set(self.suci_hash,
+                amf_ue->suci, strlen(amf_ue->suci), amf_ue);
 }
 
 OpenAPI_rat_type_e amf_ue_rat_type(amf_ue_t *amf_ue)
@@ -2685,6 +2666,7 @@ void amf_sess_remove(amf_sess_t *sess)
     AMF_SESS_CLEAR_N2_TRANSFER(sess, pdu_session_resource_setup_request);
     AMF_SESS_CLEAR_N2_TRANSFER(sess, pdu_session_resource_modification_command);
     AMF_SESS_CLEAR_N2_TRANSFER(sess, path_switch_request_ack);
+    AMF_SESS_CLEAR_N2_TRANSFER(sess, path_switch_request_unsuccessful);
     AMF_SESS_CLEAR_N2_TRANSFER(sess, handover_request);
     AMF_SESS_CLEAR_N2_TRANSFER(sess, handover_command);
 
@@ -3066,9 +3048,11 @@ void amf_ue_restore_memento(amf_ue_t *amf_ue, const amf_ue_memento_t *memento)
     amf_ue->abba_len = memento->abba_len;
     memcpy(amf_ue->hxres_star, memento->hxres_star, OGS_MAX_RES_LEN);
     memcpy(amf_ue->kamf, memento->kamf, OGS_SHA256_DIGEST_SIZE);
+    /* TS 24.501 4.4.3.1: keys that were not replaced keep their NAS COUNT */
+    if (memcmp(amf_ue->knas_int, memento->knas_int, OGS_SHA256_DIGEST_SIZE/2))
+        amf_ue->dl_count = memento->dl_count;
     memcpy(amf_ue->knas_int, memento->knas_int, OGS_SHA256_DIGEST_SIZE/2);
     memcpy(amf_ue->knas_enc, memento->knas_enc, OGS_SHA256_DIGEST_SIZE/2);
-    amf_ue->dl_count = memento->dl_count;
     amf_ue->ul_count.i32 = memento->ul_count;
     amf_ue->ul_count_accepted = memento->ul_count_accepted;
     memcpy(amf_ue->kgnb, memento->kgnb, OGS_SHA256_DIGEST_SIZE);

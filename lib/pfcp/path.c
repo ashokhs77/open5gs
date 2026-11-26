@@ -257,6 +257,38 @@ int ogs_pfcp_send_heartbeat_response(ogs_pfcp_xact_t *xact)
     return rv;
 }
 
+void ogs_pfcp_send_heartbeat_response_to(
+        ogs_socket_t fd, ogs_sockaddr_t *to, uint32_t sqn)
+{
+    const int hlen = OGS_PFCP_HEADER_LEN - OGS_PFCP_SEID_LEN;
+    ogs_pfcp_header_t *h;
+    ogs_pkbuf_t *pkbuf;
+
+    ogs_warn("Heartbeat Request from unknown PFCP peer %s",
+            ogs_sockaddr_to_string_static(to));
+
+    pkbuf = ogs_pfcp_build_heartbeat_response(
+            OGS_PFCP_HEARTBEAT_RESPONSE_TYPE);
+    if (!pkbuf) {
+        ogs_error("ogs_pfcp_build_heartbeat_response() failed");
+        return;
+    }
+
+    ogs_pkbuf_push(pkbuf, hlen);
+    h = (ogs_pfcp_header_t *)pkbuf->data;
+    memset(h, 0, hlen);
+    h->version = OGS_PFCP_VERSION;
+    h->type = OGS_PFCP_HEARTBEAT_RESPONSE_TYPE;
+    h->length = htobe16(pkbuf->len - 4);
+    h->sqn_only = OGS_PFCP_XID_TO_SQN(OGS_PFCP_SQN_TO_XID(sqn));
+
+    if (ogs_sendto(fd, pkbuf->data, pkbuf->len, 0, to) < 0)
+        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
+                "ogs_sendto() failed to %s", ogs_sockaddr_to_string_static(to));
+
+    ogs_pkbuf_free(pkbuf);
+}
+
 int ogs_pfcp_cp_send_association_setup_request(ogs_pfcp_node_t *node,
         void (*cb)(ogs_pfcp_xact_t *xact, void *data))
 {
@@ -558,6 +590,9 @@ void ogs_pfcp_send_error_message(
     ogs_pfcp_message_t errmsg;
     ogs_pfcp_tlv_cause_t *cause = NULL;
     ogs_pfcp_tlv_offending_ie_t *offending_ie = NULL;
+    ogs_pfcp_tlv_node_id_t *node_id = NULL;
+    ogs_pfcp_node_id_t pfcp_node_id;
+    int node_id_len = 0;
     ogs_pkbuf_t *pkbuf = NULL;
 
     ogs_assert(xact);
@@ -572,23 +607,29 @@ void ogs_pfcp_send_error_message(
         offending_ie = &errmsg.pfcp_pfd_management_response.offending_ie;
         break;
     case OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE:
+        node_id = &errmsg.pfcp_association_setup_response.node_id;
         cause = &errmsg.pfcp_association_setup_response.cause;
         break;
     case OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE:
+        node_id = &errmsg.pfcp_association_update_response.node_id;
         cause = &errmsg.pfcp_association_update_response.cause;
         break;
     case OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE:
+        node_id = &errmsg.pfcp_association_release_response.node_id;
         cause = &errmsg.pfcp_association_release_response.cause;
         break;
     case OGS_PFCP_NODE_REPORT_RESPONSE_TYPE:
+        node_id = &errmsg.pfcp_node_report_response.node_id;
         cause = &errmsg.pfcp_node_report_response.cause;
         offending_ie = &errmsg.pfcp_node_report_response.offending_ie;
         break;
     case OGS_PFCP_SESSION_SET_DELETION_RESPONSE_TYPE:
+        node_id = &errmsg.pfcp_session_set_deletion_response.node_id;
         cause = &errmsg.pfcp_session_set_deletion_response.cause;
         offending_ie = &errmsg.pfcp_session_set_deletion_response.offending_ie;
         break;
     case OGS_PFCP_SESSION_ESTABLISHMENT_RESPONSE_TYPE:
+        node_id = &errmsg.pfcp_session_establishment_response.node_id;
         cause = &errmsg.pfcp_session_establishment_response.cause;
         offending_ie = &errmsg.pfcp_session_establishment_response.offending_ie;
         break;
@@ -617,6 +658,18 @@ void ogs_pfcp_send_error_message(
     if (offending_ie && offending_ie_value) {
         offending_ie->presence = 1;
         offending_ie->u16 = offending_ie_value;
+    }
+
+    /* TS 29.244 7.2.3.2: include the Node ID where the table has it M */
+    if (node_id) {
+        rv = ogs_pfcp_sockaddr_to_node_id(&pfcp_node_id, &node_id_len);
+        if (rv != OGS_OK) {
+            ogs_error("ogs_pfcp_sockaddr_to_node_id() failed");
+            return;
+        }
+        node_id->presence = 1;
+        node_id->data = &pfcp_node_id;
+        node_id->len = node_id_len;
     }
 
     pkbuf = ogs_pfcp_build_msg(&errmsg);

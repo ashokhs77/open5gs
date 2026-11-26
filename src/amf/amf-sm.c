@@ -61,6 +61,7 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
     int rc;
 
     ogs_nas_5gs_message_t nas_message;
+    ogs_nas_security_header_type_t h;
     ran_ue_t *ran_ue = NULL;
     amf_ue_t *amf_ue = NULL;
     amf_sess_t *sess = NULL;
@@ -454,6 +455,18 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                 break;
             }
 
+            if (AMF_AUTH_XACT_STATE(service_name_id, state)) {
+                /* A later registration may already be using the same URI. */
+                if (amf_ue->confirmation_for_5g_aka.xact_id != sbi_xact_id)
+                    break;
+                amf_ue->confirmation_for_5g_aka.xact_id = OGS_INVALID_POOL_ID;
+                if (!OGS_FSM_CHECK(&amf_ue->sm, gmm_state_authentication))
+                    break;
+                if (state == AMF_AUTH_CONFIRM &&
+                        sbi_message.res_status != OGS_SBI_HTTP_STATUS_OK)
+                    CLEAR_5G_AKA_PENDING(amf_ue);
+            }
+
             ogs_assert(OGS_FSM_STATE(&amf_ue->sm));
 
             e->amf_ue_id = amf_ue->id;
@@ -557,23 +570,9 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                             amf_ue->supi, sess->psi, sbi_message.res_status);
                 } else if (sbi_message.res_status ==
                         OGS_SBI_HTTP_STATUS_NOT_FOUND) {
-                    /*
-                     * The SMF no longer has this SM context (e.g. the SMF
-                     * restarted and lost every session). The release was
-                     * asked for so that the context is gone, and it is:
-                     * treat it as released and carry on.
-                     *
-                     * This used to fail an initial registration of a UE
-                     * that still had PDU sessions in the AMF
-                     * (AMF_RELEASE_SM_CONTEXT_AUTHENTICATED_REGISTRATION):
-                     * the UE got Registration Reject #7 (5GS services not
-                     * allowed) and, since the stale session stayed, every
-                     * retry failed the same way - after an SMF restart,
-                     * such UEs could not register again.
-                     */
-                    ogs_warn("[%s:%d] SM context already gone at the SMF "
-                            "[404] - released locally",
-                            amf_ue->supi, sess->psi);
+                    /* SMF has no SM context (e.g. after SMF restart) */
+                    ogs_warn("[%s:%d] SM context already released [%d]",
+                            amf_ue->supi, sess->psi, sbi_message.res_status);
                 } else {
                     ogs_error("[%s:%d] HTTP response error [%d]",
                             amf_ue->supi, sess->psi, sbi_message.res_status);
@@ -949,6 +948,12 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
 
         amf_ue = amf_ue_find_by_id(ran_ue->amf_ue_id);
 
+        /* The integrity verdict of this message, checked when queued */
+        if (amf_ue) {
+            amf_ue->mac_failed = e->nas.mac_failed;
+            e->amf_ue_id = amf_ue->id;
+        }
+
         if (amf_ue && amf_ue->registration_session_release_pending) {
             ogs_error("[%s] Ignore NAS message while registration session "
                     "release is pending", amf_ue->supi);
@@ -966,9 +971,9 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
          *     -> dispatched to A's context, not to B's
          *
          * The identity in the message is never looked at, so
-         * amf_ue_set_suci() re-labels A's context as B and
-         * amf_ue_release_old_context() moves B's sessions into it. If A
-         * still owns sessions, that hits
+         * amf_ue_set_suci() re-labels A's context as B, and once the
+         * request is authenticated amf_ue_release_old_context() moves B's
+         * sessions into it. If A still owns sessions, that hits
          *
          *     ogs_assert(ogs_list_empty(&amf_ue->sess_list));
          *
@@ -1073,7 +1078,6 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
 
         if (!amf_ue) {
             bool pending_guti;
-            ogs_nas_security_header_type_t h;
 
             h.type = e->nas.type;
             amf_ue = amf_ue_find_by_message(&nas_message, &pending_guti);
@@ -1134,9 +1138,10 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                         (pending_guti && amf_ue->mac_failed)) {
                         ogs_warn("[%s] nas_security_decode() failed",
                                 amf_ue->suci);
+                        /* The message is discarded with its verdict */
+                        amf_ue->mac_failed = 0;
                         if (pending_guti) {
                             /* Verification did not authorize rebinding. */
-                            amf_ue->mac_failed = 0;
                             r = ngap_send_ran_ue_context_release_command(
                                     ran_ue, NGAP_Cause_PR_nas,
                                     NGAP_CauseNas_normal_release,
@@ -1209,6 +1214,13 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         e->amf_ue_id = amf_ue->id;
         e->nas.message = &nas_message;
 
+        /* A discarded message leaves the secure exchange established */
+        h.type = e->nas.type;
+        if (h.integrity_protected && SECURITY_CONTEXT_IS_VALID(amf_ue))
+            amf_ue->integrity_verified = true;
+        else if (e->ngap.code == NGAP_ProcedureCode_id_InitialUEMessage)
+            amf_ue->integrity_verified = false;
+
         ogs_fsm_dispatch(&amf_ue->sm, e);
 
         ogs_pkbuf_free(pkbuf);
@@ -1229,5 +1241,12 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
     default:
         ogs_error("No handler for event %s", amf_event_get_name(e));
         break;
+    }
+
+    /* The verdict was that of this NAS message only, whatever its fate */
+    if (e->h.id == AMF_EVENT_5GMM_MESSAGE) {
+        amf_ue = amf_ue_find_by_id(e->amf_ue_id);
+        if (amf_ue)
+            amf_ue->mac_failed = 0;
     }
 }

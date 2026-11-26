@@ -48,6 +48,8 @@ static struct {
 
 static mme_ue_t *attach_ue(ogs_pool_id_t id)
 { return id == f->ue.id ? &f->ue : NULL; }
+static mme_ue_t *attach_ue_by_imsi(const uint8_t *imsi, int imsi_len)
+{ return &f->ue; }
 static enb_ue_t *attach_enb(ogs_pool_id_t id)
 { return id == f->enb.id ? &f->enb : NULL; }
 static void attach_air(enb_ue_t *enb, mme_ue_t *ue,
@@ -107,6 +109,10 @@ static int attach_command(mme_ue_t *ue)
 {
     ogs_pkbuf_t *pkbuf = emm_build_security_mode_command(ue);
     if (!pkbuf) return OGS_ERROR;
+    pkbuf = nas_eps_security_protect(ue,
+        OGS_NAS_SECURITY_HEADER_INTEGRITY_PROTECTED_AND_NEW_SECURITY_CONTEXT,
+        pkbuf);
+    if (!pkbuf) return OGS_ERROR;
     ogs_pkbuf_free(pkbuf);
     ogs_timer_start(ue->t3460.timer, ogs_time_from_sec(1));
     f->smc++;
@@ -142,6 +148,7 @@ void attach_delete_or_detach(enb_ue_t *, mme_ue_t *);
 #define emm_state_ue_context_will_remove attach_state_ue_context_will_remove
 #define emm_state_exception attach_state_exception
 #define mme_ue_find_by_id attach_ue
+#define mme_ue_find_by_imsi attach_ue_by_imsi
 #define enb_ue_find_by_id attach_enb
 #define mme_s6a_send_air attach_air
 #define mme_s6a_send_ulr attach_ulr
@@ -375,6 +382,7 @@ static void dispatch_ksi(uint8_t type, uint8_t security_type, bool invalid_mac,
     event.pkbuf = pkbuf;
     event.s1ap_code = S1AP_ProcedureCode_id_initialUEMessage;
     header.integrity_protected = security_type;
+    header.ciphered = security_type;
     event.nas_type = header.type;
     message.emm.h.message_type = type;
     if (type == OGS_NAS_EPS_ATTACH_REQUEST) {
@@ -1166,6 +1174,10 @@ static void aia_allocates_native_ksi(abts_case *tc, void *data)
             /* SMC installs a usable context even while the original UE KSI
              * remains 7 ("no key available"). */
             pkbuf = emm_build_security_mode_command(&f->ue);
+            ogs_assert(pkbuf);
+            pkbuf = nas_eps_security_protect(&f->ue,
+                OGS_NAS_SECURITY_HEADER_INTEGRITY_PROTECTED_AND_NEW_SECURITY_CONTEXT,
+                pkbuf);
             ogs_assert(pkbuf);
             ABTS_TRUE(tc, SECURITY_CONTEXT_IS_VALID(&f->ue));
             ogs_pkbuf_free(pkbuf);

@@ -150,13 +150,24 @@ int amf_nausf_auth_handle_authenticate(
         }
     }
 
-    OGS_SBI_SETUP_CLIENT(&amf_ue->confirmation_for_5g_aka, client);
+    if (client != amf_ue->confirmation_for_5g_aka.client)
+        OGS_SBI_SETUP_CLIENT(&amf_ue->confirmation_for_5g_aka, client);
 
     ogs_free(fqdn);
     ogs_freeaddrinfo(addr);
     ogs_freeaddrinfo(addr6);
 
-    STORE_5G_AKA_CONFIRMATION(amf_ue, LinksValueSchemeValue->href);
+    /* AUSF may reuse the confirmed resource for this challenge. A failed
+     * confirmation then invalidates it for subsequent deregistration. */
+    if (CHECK_5G_AKA_CONFIRMATION(amf_ue) &&
+        !strcmp(amf_ue->confirmation_for_5g_aka.resource_uri,
+                LinksValueSchemeValue->href))
+        CLEAR_5G_AKA_CONFIRMATION(amf_ue);
+
+    CLEAR_5G_AKA_PENDING(amf_ue);
+    amf_ue->confirmation_for_5g_aka.pending_uri =
+        ogs_strdup(LinksValueSchemeValue->href);
+    ogs_assert(amf_ue->confirmation_for_5g_aka.pending_uri);
 
     memcpy(amf_ue->rand, rand, sizeof(amf_ue->rand));
     memcpy(amf_ue->hxres_star, hxres_star, sizeof(amf_ue->hxres_star));
@@ -199,18 +210,19 @@ int amf_nausf_auth_handle_authenticate_confirmation(
         return OGS_ERROR;
     }
 
-    if (ogs_supi_is_valid(ConfirmationDataResponse->supi) == false) {
-        ogs_error("[%s] Invalid SUPI", amf_ue->suci);
-        return OGS_ERROR;
-    }
-
-    if (!ConfirmationDataResponse->kseaf) {
-        ogs_error("[%s] No Kseaf", amf_ue->suci);
-        return OGS_ERROR;
-    }
-
+    /* SUPI and Kseaf are only present when the AUSF confirms success */
     if (ConfirmationDataResponse->auth_result ==
             OpenAPI_auth_result_AUTHENTICATION_SUCCESS) {
+        if (ogs_supi_is_valid(ConfirmationDataResponse->supi) == false) {
+            ogs_error("[%s] Invalid SUPI", amf_ue->suci);
+            return OGS_ERROR;
+        }
+
+        if (!ConfirmationDataResponse->kseaf) {
+            ogs_error("[%s] No Kseaf", amf_ue->suci);
+            return OGS_ERROR;
+        }
+
         if (ogs_hex_from_string_checked(ConfirmationDataResponse->kseaf,
                     kseaf, sizeof(kseaf)) != OGS_OK) {
             ogs_error("[%s] Invalid Kseaf", amf_ue->suci);
@@ -221,6 +233,16 @@ int amf_nausf_auth_handle_authenticate_confirmation(
     amf_ue->auth_result = ConfirmationDataResponse->auth_result;
     if (amf_ue->auth_result == OpenAPI_auth_result_AUTHENTICATION_SUCCESS) {
 
+        CLEAR_5G_AKA_CONFIRMATION(amf_ue);
+        amf_ue->confirmation_for_5g_aka.resource_uri =
+            amf_ue->confirmation_for_5g_aka.pending_uri;
+        amf_ue->confirmation_for_5g_aka.pending_uri = NULL;
+        if (amf_ue->confirmation_for_5g_aka.confirmed_client)
+            ogs_sbi_client_remove(amf_ue->confirmation_for_5g_aka.confirmed_client);
+        amf_ue->confirmation_for_5g_aka.confirmed_client =
+            amf_ue->confirmation_for_5g_aka.client;
+        amf_ue->confirmation_for_5g_aka.client = NULL;
+
         amf_ue_set_supi(amf_ue, ConfirmationDataResponse->supi);
 
         ogs_kdf_kamf(amf_ue->supi, amf_ue->abba, amf_ue->abba_len,
@@ -230,6 +252,7 @@ int amf_nausf_auth_handle_authenticate_confirmation(
 
     } else {
 
+        CLEAR_5G_AKA_PENDING(amf_ue);
         ogs_error("[%s] Authentication failed", amf_ue->suci);
         return OGS_ERROR;
     }

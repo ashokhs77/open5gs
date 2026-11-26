@@ -84,6 +84,14 @@ executable(
 )
 
 executable(
+    'pfcp_session_fuzz',
+    sources : files('pfcp-session-fuzz.c'),
+    c_args : [testunit_core_cc_flags, sbi_cc_flags],
+    dependencies : [libpfcp_dep, libcore_dep],
+    link_args: lib_fuzzing_engine
+)
+
+executable(
     'pfcp_packet_match_fuzz',
     sources : pfcp_packet_match_source,
     c_args : [testunit_core_cc_flags, sbi_cc_flags],
@@ -116,6 +124,14 @@ executable(
 )
 
 executable(
+    'sbi_openapi_extra_fuzz',
+    sources : files('sbi-openapi-extra-fuzz.c'),
+    c_args : [testunit_core_cc_flags, sbi_cc_flags],
+    dependencies : [libsbi_dep, libcore_dep],
+    link_args: lib_fuzzing_engine
+)
+
+executable(
     'sbi_request_fuzz',
     sources : sbi_request_source,
     c_args : [testunit_core_cc_flags, sbi_cc_flags],
@@ -132,9 +148,33 @@ executable(
 )
 
 executable(
+    'nnrf_handler_fuzz',
+    sources : files('nnrf-handler-fuzz.c'),
+    c_args : [testunit_core_cc_flags, sbi_cc_flags],
+    dependencies : [libsbi_dep, libcore_dep],
+    link_args: lib_fuzzing_engine
+)
+
+executable(
     'ipfw_rule_fuzz',
     sources : ipfw_rule_source,
     c_args : [testunit_core_cc_flags, sbi_cc_flags],
     dependencies : [libipfw_dep, libproto_dep, libcore_dep],
+    link_args: lib_fuzzing_engine
+)
+
+executable(
+    'gtp_xact_fuzz',
+    sources : files('gtp-xact-fuzz.c'),
+    c_args : [testunit_core_cc_flags, sbi_cc_flags],
+    dependencies : [libgtp_dep, libcore_dep],
+    link_args: lib_fuzzing_engine
+)
+
+executable(
+    'crypt_kdf_fuzz',
+    sources : files('crypt-kdf-fuzz.c'),
+    c_args : [testunit_core_cc_flags, sbi_cc_flags],
+    dependencies : [libcrypt_dep],
     link_args: lib_fuzzing_engine
 )

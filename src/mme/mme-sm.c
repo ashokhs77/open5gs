@@ -68,6 +68,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
     int rc, r;
 
     ogs_nas_eps_message_t nas_message;
+    ogs_nas_security_header_type_t h;
     enb_ue_t *enb_ue = NULL;
     sgw_ue_t *sgw_ue = NULL;
     mme_ue_t *mme_ue = NULL;
@@ -267,11 +268,17 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
         mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
 
+        /* The integrity verdict of this message, checked when queued */
+        if (mme_ue) {
+            mme_ue->mac_failed = e->mac_failed;
+            e->mme_ue_id = mme_ue->id;
+        }
+
         if (mme_ue && mme_ue->attach_session_delete_pending) {
             ogs_error("[%s] NAS message while deleting old Attach sessions",
                     mme_ue->imsi_bcd);
             ogs_pkbuf_free(pkbuf);
-            return;
+            break;
         }
 
         /*
@@ -284,8 +291,9 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
          *     -> dispatched to A's context, not to B's
          *
          * The identity in the message is never looked at, so
-         * mme_ue_set_imsi() re-labels A's context as B and moves B's
-         * sessions into it. If A still owns sessions, Phase-2 hits
+         * mme_ue_set_imsi() re-labels A's context as B, and once the
+         * Attach is authenticated moves B's sessions into it. If A still
+         * owns sessions, Phase-2 hits
          *
          *     ogs_assert(ogs_list_empty(&mme_ue->sess_list));
          *
@@ -335,13 +343,12 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                 mme_send_release_access_bearer_or_ue_context_release(enb_ue);
 
                 ogs_pkbuf_free(pkbuf);
-                return;
+                break;
             }
         }
 
         if (!mme_ue) {
             bool pending_guti;
-            ogs_nas_security_header_type_t h;
 
             h.type = e->nas_type;
             mme_ue = mme_ue_find_by_message(&nas_message, &pending_guti);
@@ -370,7 +377,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     ogs_expect(r == OGS_OK);
                     ogs_assert(r != OGS_ERROR);
                     ogs_pkbuf_free(pkbuf);
-                    return;
+                    break;
                 }
 
                 ogs_assert(ECM_IDLE(mme_ue));
@@ -384,7 +391,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     ogs_expect(r == OGS_OK);
                     ogs_assert(r != OGS_ERROR);
                     ogs_pkbuf_free(pkbuf);
-                    return;
+                    break;
                 }
                 /* Here, if the MME_UE Context is found,
                  * the integrity check is not performed
@@ -400,9 +407,10 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     if (nas_eps_security_decode(mme_ue, h, pkbuf) != OGS_OK ||
                         (pending_guti && mme_ue->mac_failed)) {
                         ogs_warn("nas_security_decode() failed");
+                        /* The message is discarded with its verdict */
+                        mme_ue->mac_failed = 0;
                         if (pending_guti) {
                             /* Verification did not authorize rebinding. */
-                            mme_ue->mac_failed = 0;
                             r = s1ap_send_ue_context_release_command(enb_ue,
                                     S1AP_Cause_PR_nas,
                                     S1AP_CauseNas_normal_release,
@@ -411,7 +419,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                                 enb_ue_remove(enb_ue);
                         }
                         ogs_pkbuf_free(pkbuf);
-                        return;
+                        break;
                     }
                 }
 
@@ -460,6 +468,14 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         e->mme_ue_id = mme_ue->id;
         e->nas_message = &nas_message;
 
+        /* A discarded message leaves the secure exchange established */
+        h.type = e->nas_type;
+        if ((h.integrity_protected || h.service_request) &&
+            SECURITY_CONTEXT_IS_VALID(mme_ue))
+            mme_ue->integrity_verified = true;
+        else if (e->s1ap_code == S1AP_ProcedureCode_id_initialUEMessage)
+            mme_ue->integrity_verified = false;
+
         ogs_fsm_dispatch(&mme_ue->sm, e);
         if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_exception)) {
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
@@ -498,7 +514,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             ogs_pkbuf_free(pkbuf);
             break;
         }
-
         if (mme_ue->attach_session_delete_pending || mme_ue->eir_check_pending) {
             ogs_error("[%s] ESM message while "
                     "checking EIR or deleting sessions", mme_ue->imsi_bcd);
@@ -565,7 +580,9 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         e->nas_message = &nas_message;
 
         /* Dispatch the admitted message to the selected bearer's ESM FSM. */
+        mme_ue->mac_failed = e->mac_failed;
         ogs_fsm_dispatch(&bearer->sm, e);
+        mme_ue->mac_failed = 0;
         if (OGS_FSM_CHECK(&bearer->sm, esm_state_bearer_deactivated)) {
             if (default_bearer->ebi == bearer->ebi) {
                 /* if the bearer is a default bearer,
@@ -1185,5 +1202,12 @@ cleanup:
     default:
         ogs_error("No handler for event %s", mme_event_get_name(e));
         break;
+    }
+
+    /* The verdict was that of this NAS message only, whatever its fate */
+    if (e->id == MME_EVENT_EMM_MESSAGE) {
+        mme_ue = mme_ue_find_by_id(e->mme_ue_id);
+        if (mme_ue)
+            mme_ue->mac_failed = 0;
     }
 }

@@ -110,13 +110,6 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
             ogs_error("[%s] No N1 SM Content", amf_ue->supi);
             return OGS_ERROR;
         }
-
-        /*
-         * NOTE : The pkbuf created in the SBI message will be removed
-         *        from ogs_sbi_message_free(), so it must be copied.
-         */
-        n1buf = ogs_pkbuf_copy(n1buf);
-        ogs_assert(n1buf);
     }
 
     n2InfoContainer = N1N2MessageTransferReqData->n2_info_container;
@@ -134,6 +127,10 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
         }
 
         ngapIeType = n2InfoContent->ngap_ie_type;
+        if (!ngapIeType) {
+            ogs_error("[%s] Missing NGAP IE type", amf_ue->supi);
+            return OGS_ERROR;
+        }
 
         ngapData = n2InfoContent->ngap_data;
         if (!ngapData || !ngapData->content_id) {
@@ -153,6 +150,15 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
          */
         n2buf = ogs_pkbuf_copy(n2buf);
         ogs_assert(n2buf);
+    }
+
+    if (n1buf) {
+        /*
+         * NOTE : The pkbuf created in the SBI message will be removed
+         *        from ogs_sbi_message_free(), so it must be copied.
+         */
+        n1buf = ogs_pkbuf_copy(n1buf);
+        ogs_assert(n1buf);
     }
 
     memset(&sendmsg, 0, sizeof(sendmsg));
@@ -395,12 +401,43 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
 
         break;
 
-    case OpenAPI_ngap_ie_type_PDU_RES_REL_CMD:
-        if (!n2buf) {
-            ogs_error("[%s] No N2 SM Content", amf_ue->supi);
+    case OpenAPI_ngap_ie_type_NULL: {
+        uint8_t type;
+
+        if (!n1buf) {
+            ogs_error("[%s] No N1 SM Content", amf_ue->supi);
             return OGS_ERROR;
         }
 
+        type = nas_5gsm_message_type(n1buf, sess->psi);
+        if (n1MessageContainer->n1_message_class != OpenAPI_n1_message_class_SM ||
+            (type != OGS_NAS_5GS_PDU_SESSION_ESTABLISHMENT_REJECT &&
+             type != OGS_NAS_5GS_PDU_SESSION_RELEASE_COMMAND)) {
+            ogs_error("[%s:%d] Unexpected N1-only message [%d]",
+                    amf_ue->supi, sess->psi, type);
+            ogs_pkbuf_free(n1buf);
+            return OGS_ERROR;
+        }
+
+        if (type == OGS_NAS_5GS_PDU_SESSION_ESTABLISHMENT_REJECT) {
+            ogs_error("[%d:%d] PDU session establishment reject",
+                    sess->psi, sess->pti);
+
+            ran_ue = ran_ue_find_by_id(sess->ran_ue_id);
+            if (ran_ue) {
+                r = nas_5gs_send_gsm_reject(ran_ue, sess,
+                        OGS_NAS_PAYLOAD_CONTAINER_N1_SM_INFORMATION, n1buf);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+            } else {
+                ogs_pkbuf_free(n1buf);
+            }
+            amf_sess_remove(sess);
+            break;
+        }
+    }
+        OGS_GNUC_FALLTHROUGH;
+    case OpenAPI_ngap_ie_type_PDU_RES_REL_CMD:
         if (CM_IDLE(amf_ue)) {
             if (N1N2MessageTransferReqData->is_skip_ind == true &&
                 N1N2MessageTransferReqData->skip_ind == true) {
@@ -468,37 +505,6 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
             ogs_fatal("[%s] Invalid AMF-UE state", amf_ue->supi);
             ogs_assert_if_reached();
         }
-        break;
-
-    case OpenAPI_ngap_ie_type_NULL:
-        /*
-         * No n2InfoContainer. According to TS23.502, this means that SMF has
-         * encountered an error and is rejecting the session.
-         *
-         * TS23.502
-         * 6.3.1.7 4.3.2.2 UE Requested PDU Session Establishment
-         * p100
-         * 11.  ...
-         * If the PDU session establishment failed anywhere between step 5
-         * and step 11, then the Namf_Communication_N1N2MessageTransfer
-         * request shall include the N1 SM container with a PDU Session
-         * Establishment Reject message ...
-         */
-        if (!n1buf) {
-            ogs_error("[%s] No N1 SM Content", amf_ue->supi);
-            return OGS_ERROR;
-        }
-
-        ogs_error("[%d:%d] PDU session establishment reject",
-                sess->psi, sess->pti);
-
-        r = nas_5gs_send_gsm_reject(
-                ran_ue_find_by_id(sess->ran_ue_id), sess,
-                OGS_NAS_PAYLOAD_CONTAINER_N1_SM_INFORMATION, n1buf);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-
-        amf_sess_remove(sess);
         break;
 
     default:
@@ -1410,10 +1416,9 @@ static char *amf_namf_comm_base64_encode_ue_security_capability(
     char *enc = NULL;
     int enc_len = 0;
 
-    char num_of_octets =
+    int num_of_octets =
             ue_security_capability.length +
-            sizeof(ue_security_capability.length) +
-            sizeof((uint8_t)OGS_NAS_5GS_REGISTRATION_REQUEST_UE_SECURITY_CAPABILITY_TYPE);
+            sizeof(ue_security_capability.length);
     /*
      * size [sizeof(ue_security_capability) + 1] is a sum of lengths:
      *        ue_security_capability (9 octets) +
@@ -1421,10 +1426,9 @@ static char *amf_namf_comm_base64_encode_ue_security_capability(
      */
     char security_octets_string[sizeof(ue_security_capability) + 1];
 
-    /* Security guarantee */
-    num_of_octets = ogs_min(
-            num_of_octets, sizeof(ue_security_capability) + 1);
-    enc_len = ogs_base64_encoded_size(num_of_octets);
+    /* Security guarantee: the IE is copied after the type octet */
+    num_of_octets = ogs_min(num_of_octets, (int)sizeof(ue_security_capability));
+    enc_len = ogs_base64_encoded_size(num_of_octets + 1);
 
     enc = ogs_calloc(1, enc_len);
     ogs_assert(enc);
@@ -1433,7 +1437,7 @@ static char *amf_namf_comm_base64_encode_ue_security_capability(
         OGS_NAS_5GS_REGISTRATION_REQUEST_UE_SECURITY_CAPABILITY_TYPE;
     memcpy(security_octets_string + 1, &ue_security_capability, num_of_octets);
     ogs_assert(ogs_base64_encode_from_buffer(enc, enc_len,
-            (const uint8_t *)security_octets_string, num_of_octets) > 0);
+            (const uint8_t *)security_octets_string, num_of_octets + 1) > 0);
 
     return enc;
 }

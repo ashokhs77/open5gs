@@ -993,15 +993,17 @@ bool smf_nsmf_handle_update_sm_context(
             smf_bearer_t *qos_flow = NULL;
 
             if (sess->handover.prepared == true) {
-                /* Need to Update? */
-                if (memcmp(&sess->remote_dl_ip, &sess->handover.remote_dl_ip,
+                /* Complete onto the target data tunnel, not the indirect
+                 * forwarding tunnel, which has done its work by this point
+                 * and is about to be removed. */
+                if (memcmp(&sess->remote_dl_ip, &sess->handover.gnb_n3_ip,
                             sizeof(sess->remote_dl_ip)) != 0 ||
-                    sess->remote_dl_teid != sess->handover.remote_dl_teid)
+                    sess->remote_dl_teid != sess->handover.gnb_n3_teid)
                     far_update = true;
 
                 memcpy(&sess->remote_dl_ip,
-                        &sess->handover.remote_dl_ip, sizeof(sess->remote_dl_ip));
-                sess->remote_dl_teid = sess->handover.remote_dl_teid;
+                        &sess->handover.gnb_n3_ip, sizeof(sess->remote_dl_ip));
+                sess->remote_dl_teid = sess->handover.gnb_n3_teid;
             }
             sess->handover.prepared = false;
 
@@ -2359,6 +2361,8 @@ bool smf_nsmf_handle_update_data_in_vsmf(
     smf_n1_n2_message_transfer_param_t param;
     ogs_nas_qos_flow_description_t qos_flow_description;
     int num_qos_flow_descriptions = 0;
+    ogs_nas_qos_rule_t qos_rule;
+    int num_qos_rules = 0;
 
     ogs_assert(stream);
     ogs_assert(message);
@@ -2456,7 +2460,9 @@ bool smf_nsmf_handle_update_data_in_vsmf(
                     return false;
                 }
                 if (src->qos_rules &&
-                    ogs_base64_decoded_size(src->qos_rules) <= 0) {
+                    (++num_qos_rules > OGS_NAS_MAX_NUM_OF_QOS_RULE ||
+                    gsm_parse_qos_rule_ie(
+                        &qos_rule, src->qos_rules) != OGS_OK)) {
                     ogs_error("[%s:%d] Invalid qosRules",
                             smf_ue->supi, sess->psi);
                     smf_sbi_send_vsmf_update_error(stream,
@@ -2538,7 +2544,9 @@ bool smf_nsmf_handle_update_data_in_vsmf(
                     return false;
                 }
                 if (src->qos_rules &&
-                    ogs_base64_decoded_size(src->qos_rules) <= 0) {
+                    (++num_qos_rules > OGS_NAS_MAX_NUM_OF_QOS_RULE ||
+                    gsm_parse_qos_rule_ie(
+                        &qos_rule, src->qos_rules) != OGS_OK)) {
                     ogs_error("[%s:%d] Invalid qosRules",
                             smf_ue->supi, sess->psi);
                     smf_sbi_send_vsmf_update_error(stream,

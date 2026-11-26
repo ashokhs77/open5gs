@@ -736,6 +736,10 @@ void smf_gsm_state_wait_5gc_sm_policy_association(ogs_fsm_t *s, smf_event_t *e)
     case OGS_FSM_EXIT_SIG:
         break;
 
+    case OGS_EVENT_SBI_TIMER:
+        OGS_FSM_TRAN(s, smf_gsm_state_5gc_n1_n2_reject);
+        break;
+
     case OGS_EVENT_SBI_CLIENT:
         sbi_message = e->h.sbi.message;
         ogs_assert(sbi_message);
@@ -1181,18 +1185,27 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
             if ((pfcp_xact->create_flags &
                         OGS_PFCP_CREATE_RESTORATION_INDICATION)) {
                 ogs_pfcp_session_establishment_response_t *rsp = NULL;
-                ogs_pfcp_f_seid_t *up_f_seid = NULL;
+                ogs_pfcp_f_seid_t up_f_seid;
+
+                /* The restoration request is a local transaction: the
+                 * response ends it. Without this commit every restored
+                 * session keeps its transaction and three timers. */
+                ogs_pfcp_xact_commit(pfcp_xact);
 
                 rsp = &pfcp_message->pfcp_session_establishment_response;
                 if (rsp->up_f_seid.presence == 0) {
                     ogs_error("No UP F-SEID");
                     break;
                 }
-                up_f_seid = rsp->up_f_seid.data;
-                ogs_assert(up_f_seid);
-                sess->upf_n4_seid = be64toh(up_f_seid->seid);
+                if (ogs_pfcp_parse_f_seid(
+                            &up_f_seid, &rsp->up_f_seid) == 0) {
+                    ogs_error("Invalid UP F-SEID");
+                    break;
+                }
+                sess->upf_n4_seid = up_f_seid.seid;
             } else {
                 ogs_error("cannot handle PFCP Session Establishment Response");
+                ogs_pfcp_xact_commit(pfcp_xact);
             }
             break;
 
@@ -2263,6 +2276,11 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
         case OpenAPI_n2_sm_info_type_PDU_RES_REL_RSP:
             ngap_state = sess->ngap_state.pdu_session_resource_release;
 
+            /*
+             * TS 38.413 8.2.2.2 and 10.4: the response answers a PDU
+             * SESSION RESOURCE RELEASE COMMAND. Without one, reject it
+             * and keep the session.
+             */
             if (ngap_state == SMF_NGAP_STATE_NONE) {
                 strerror = ogs_msprintf(
                         "[%s:%d] No PDUSessionResourceReleaseRequest",
@@ -2275,8 +2293,6 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
                         OGS_SBI_HTTP_STATUS_BAD_REQUEST, NULL, strerror,
                         NULL, NULL));
                 ogs_free(strerror);
-
-                OGS_FSM_TRAN(s, smf_gsm_state_exception);
 
             } else if (ngap_state ==
                     SMF_NGAP_STATE_ERROR_INDICATION_RECEIVED_FROM_5G_AN) {
@@ -2408,6 +2424,25 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
     }
 }
 
+static ogs_pkbuf_t *build_ue_requested_n2_release(smf_sess_t *sess)
+{
+    ogs_pkbuf_t *n2smbuf;
+
+    /* TS 23.502 4.3.4.2 step 3a: no N2 release for a deactivated UP. */
+    if (sess->up_cnx_state == OpenAPI_up_cnx_state_DEACTIVATED) {
+        sess->ngap_state.pdu_session_resource_release =
+            SMF_NGAP_STATE_DELETE_TRIGGER_UE_REQUESTED;
+        sess->n2_released = true;
+        return NULL;
+    }
+
+    n2smbuf = ngap_build_pdu_session_resource_release_command_transfer(
+            sess, SMF_NGAP_STATE_DELETE_TRIGGER_UE_REQUESTED,
+            NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release);
+    ogs_assert(n2smbuf);
+    return n2smbuf;
+}
+
 void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
 {
     int status;
@@ -2449,6 +2484,22 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                     sess, gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID));
         } else {
             /* 5GC */
+            if (e->h.sbi.state ==
+                    OGS_PFCP_DELETE_TRIGGER_SESSION_REPLACEMENT) {
+                /*
+                 * Issue #5059: the old session is being replaced by
+                 * a new Create with the same PSI, which is held in
+                 * sess->replacement_create. There is no SBI stream.
+                 *
+                 * If the Delete cannot be sent, do not assert.
+                 * Remove the old session locally as before and
+                 * resume the held Create.
+                 */
+                if (smf_5gc_pfcp_send_session_deletion_request(
+                            sess, NULL, e->h.sbi.state) != OGS_OK)
+                    smf_sess_finish_replacement(sess);
+                break;
+            }
             stream_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
             if (stream_id >= OGS_MIN_POOL_ID && stream_id <= OGS_MAX_POOL_ID)
                 stream = ogs_sbi_stream_find_by_id(stream_id);
@@ -2677,13 +2728,7 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                             sess, OGS_5GSM_CAUSE_REACTIVATION_REQUESTED);
                         ogs_assert(param.n1smbuf);
 
-                        param.n2smbuf =
-                            ngap_build_pdu_session_resource_release_command_transfer(
-                                sess,
-                                SMF_NGAP_STATE_DELETE_TRIGGER_UE_REQUESTED,
-                                NGAP_Cause_PR_nas,
-                                NGAP_CauseNas_normal_release);
-                        ogs_assert(param.n2smbuf);
+                        param.n2smbuf = build_ue_requested_n2_release(sess);
 
         /*
          * Skip_ind is not used when changing the PDU Session Anchor.
@@ -2782,18 +2827,13 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                                 sess, OGS_5GSM_CAUSE_REGULAR_DEACTIVATION);
                         ogs_assert(n1smbuf);
 
-                        n2smbuf =
-                            ngap_build_pdu_session_resource_release_command_transfer(
-                                    sess,
-                                    SMF_NGAP_STATE_DELETE_TRIGGER_UE_REQUESTED,
-                                    NGAP_Cause_PR_nas,
-                                    NGAP_CauseNas_normal_release);
-                        ogs_assert(n2smbuf);
+                        n2smbuf = build_ue_requested_n2_release(sess);
 
                         ogs_assert(stream);
                         smf_sbi_send_sm_context_updated_data_n1_n2_message(
                                 sess, stream, n1smbuf,
-                                OpenAPI_n2_sm_info_type_PDU_RES_REL_CMD,
+                                n2smbuf ? OpenAPI_n2_sm_info_type_PDU_RES_REL_CMD :
+                                          OpenAPI_n2_sm_info_type_NULL,
                                 n2smbuf);
                     }
 
@@ -3281,6 +3321,7 @@ void smf_gsm_state_wait_epc_auth_release(ogs_fsm_t *s, smf_event_t *e)
     case SMF_EVT_S6B_MESSAGE:
         s6b_message = e->s6b_message;
         ogs_assert(s6b_message);
+        gtp_xact = ogs_gtp_xact_find_by_id(e->gtp_xact_id);
 
         switch(s6b_message->cmd_code) {
         case OGS_DIAM_S6B_CMD_SESSION_TERMINATION:
@@ -4216,6 +4257,15 @@ void smf_gsm_state_5gc_n1_n2_reject(ogs_fsm_t *s, smf_event_t *e)
                     smf_ue->supi, sess->psi, sbi_message->h.service.name);
             OGS_FSM_TRAN(s, smf_gsm_state_exception);
         }
+        break;
+
+    case SMF_EVT_SESSION_RELEASE:
+        smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+        ogs_assert(smf_ue);
+
+        ogs_warn("[%s:%d] Session Release ignored: "
+                "establishment reject in progress",
+                smf_ue->supi, sess->psi);
         break;
 
     default:

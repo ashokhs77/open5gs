@@ -134,6 +134,7 @@ typedef struct mme_context_s {
     } dns;
 
     ogs_list_t      enb_list;       /* ENB S1AP Client List */
+    unsigned int    num_of_setup_enb; /* Associations admitted by S1 Setup */
 
     ogs_list_t      vlr_list;       /* VLR SGsAP Client List */
     ogs_list_t      csmap_list;     /* TAI-LAI Map List */
@@ -297,6 +298,7 @@ typedef struct mme_enb_s {
 
     ogs_fsm_t       sm;         /* A state machine */
 
+    bool            setup_complete;
     bool            enb_id_presence;
     uint32_t        enb_id;     /* eNB_ID received from eNB */
     /* Optional human-readable eNB name from the S1SetupRequest eNBname
@@ -306,10 +308,6 @@ typedef struct mme_enb_s {
     char            enb_name[64];
     ogs_plmn_id_t   plmn_id;    /* eNB PLMN-ID received from eNB */
     ogs_sctp_sock_t sctp;       /* SCTP socket */
-
-    struct {
-        bool s1_setup_success;  /* eNB S1AP Setup complete successfuly */
-    } state;
 
     int             max_num_of_ostreams;/* SCTP Max num of outbound streams */
     uint16_t        ostream_id;         /* enb_ostream_id generator */
@@ -634,6 +632,8 @@ struct mme_ue_s {
     } while(0)
     int             security_context_available;
     int             mac_failed;
+    /* The secure exchange of NAS messages is established on the connection */
+    bool            integrity_verified;
 
     /* Authentication synch failure counter */
     uint8_t auth_synch_fail_count;
@@ -1151,6 +1151,9 @@ typedef struct mme_bearer_s {
     uint32_t        target_s1u_teid;    /* Target S1U TEID from HO-Req-Ack */
     ogs_ip_t        target_s1u_ip;      /* Target S1U ADDR from HO-Req-Ack */
 
+    /* E-RABSetupRequest sent, its response not yet */
+    bool            e_rab_setup_request_pending;
+
     uint32_t        enb_dl_teid;
     ogs_ip_t        enb_dl_ip;
     uint32_t        enb_ul_teid;
@@ -1264,6 +1267,7 @@ void mme_ue_set_hss_identity(mme_ue_t *mme_ue,
 void mme_ue_clear_hss_identity(mme_ue_t *mme_ue);
 
 mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr);
+void mme_enb_mark_setup_complete(mme_enb_t *enb);
 int mme_enb_remove(mme_enb_t *enb);
 int mme_enb_remove_all(void);
 mme_enb_t *mme_enb_find_by_addr(const ogs_sockaddr_t *addr);
@@ -1327,6 +1331,7 @@ typedef enum {
     MME_UE_IMSI_FROM_ATTACH_REQUEST = 0,
     MME_UE_IMSI_FROM_IDENTITY_RESPONSE,
     MME_UE_IMSI_FROM_SGSN_CONTEXT_RESPONSE,
+    MME_UE_IMSI_FROM_AUTHENTICATION_RESPONSE,
 } mme_ue_imsi_source_e;
 
 int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd,

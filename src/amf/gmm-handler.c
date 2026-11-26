@@ -379,6 +379,20 @@ ogs_nas_5gmm_cause_t gmm_handle_registration_request(amf_ue_t *amf_ue,
                 sizeof(registration_request->ue_security_capability.length));
     }
 
+    /*
+     * TS 24.501 5.5.1.2.8 i): no 5GS encryption algorithm (all bits zero)
+     * is rejected; no 5GS integrity algorithm selects NIA0, rejected below
+     */
+    if (amf_ue->nas.registration.value ==
+            OGS_NAS_5GS_REGISTRATION_TYPE_INITIAL &&
+        (registration_request->presencemask &
+            OGS_NAS_5GS_REGISTRATION_REQUEST_UE_SECURITY_CAPABILITY_PRESENT) &&
+        ue_security_capability->nr_ea == 0) {
+        ogs_error("[UE:0x%x:0x%x] No 5GS encryption algorithm",
+            ue_security_capability->nr_ea, ue_security_capability->nr_ia);
+        return OGS_5GMM_CAUSE_UE_SECURITY_CAPABILITIES_MISMATCH;
+    }
+
     if (amf_selected_int_algorithm(amf_ue) ==
             OGS_NAS_SECURITY_ALGORITHMS_NIA0) {
         ogs_error("[UE:0x%x:0x%x], NEA0 can be used in Encrypt[0x%x], "
@@ -984,7 +998,6 @@ int gmm_handle_authentication_response(amf_ue_t *amf_ue,
     ogs_nas_authentication_response_parameter_t
         *authentication_response_parameter = NULL;
     uint8_t hxres_star[OGS_MAX_RES_LEN];
-    int r;
 
     ogs_assert(amf_ue);
     ogs_assert(authentication_response);
@@ -1018,12 +1031,6 @@ int gmm_handle_authentication_response(amf_ue_t *amf_ue,
 
     memcpy(amf_ue->xres_star, authentication_response_parameter->res,
             authentication_response_parameter->length);
-
-    r = amf_ue_sbi_discover_and_send(
-            OpenAPI_service_name_nausf_auth, NULL,
-            amf_nausf_auth_build_authenticate_confirmation, amf_ue, 0, NULL);
-    ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     return OGS_OK;
 }
@@ -1301,15 +1308,10 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
              * when a PDU session establishment message is received
              * for an existing session.
              *
-             * It should be noted that XXX_recieved, which is initialized now,
-             * has a different initialization location than XXX_gsm_type.
-             *
-             * XXX_received is initialized in the ESTABLISHMENT phase,
-             * but XXX_gsm_type is initialized in the RELEASE phase
-             * when a PDU session release command with a Reactivation Request
-             * and a PDU session release complete are sent simultaneously.
+             * Keep the NAS message types until the previous release
+             * finishes so it can recognize the re-establishment request.
              */
-                sess->pdu_session_resource_release_response_received = false;
+                sess->pdu_session_resource_release_complete = false;
                 sess->pdu_session_release_complete_received = false;
             }
         } else {
@@ -1784,8 +1786,7 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                 break;
             case OGS_NAS_5GS_PDU_SESSION_RELEASE_COMPLETE:
                 sess->pdu_session_release_complete_received = true;
-                if (sess->pdu_session_resource_release_response_received ==
-                        true)
+                if (sess->pdu_session_resource_release_complete == true)
                     CLEAR_SESSION_CONTEXT(sess);
                 break;
             default:

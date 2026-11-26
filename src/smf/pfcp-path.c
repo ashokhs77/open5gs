@@ -165,6 +165,14 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
     node = ogs_pfcp_node_find(&ogs_pfcp_self()->pfcp_peer_list,
             pfcp_status == OGS_PFCP_STATUS_SUCCESS ? &node_id : NULL, &from);
     if (!node) {
+        /* TS 29.244 6.2.2.2 */
+        if (message->h.type == OGS_PFCP_HEARTBEAT_REQUEST_TYPE &&
+            !message->h.seid_presence &&
+            message->pfcp_heartbeat_request.recovery_time_stamp.presence) {
+            ogs_pfcp_send_heartbeat_response_to(fd, &from, message->h.sqn);
+            goto cleanup;
+        }
+
         if (message->h.type == OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE ||
             message->h.type == OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE) {
             ogs_assert(pfcp_status == OGS_PFCP_STATUS_SUCCESS);
@@ -336,7 +344,8 @@ static void sess_5gc_timeout(ogs_pfcp_xact_t *xact, void *data)
         ogs_error("%s", strerror);
 
         if (trigger == OGS_PFCP_DELETE_TRIGGER_LOCAL_INITIATED ||
-            trigger == OGS_PFCP_DELETE_TRIGGER_PCF_INITIATED) {
+            trigger == OGS_PFCP_DELETE_TRIGGER_PCF_INITIATED ||
+            trigger == OGS_PFCP_DELETE_TRIGGER_SESSION_REPLACEMENT) {
 
             /* Nothing */
 
@@ -375,6 +384,7 @@ static void sess_5gc_timeout(ogs_pfcp_xact_t *xact, void *data)
         e->sess_id = sess->id;
         e->h.timer_id = SMF_TIMER_PFCP_NO_DELETION_RESPONSE;
         e->pfcp_node = sess->pfcp_node;
+        e->release.trigger = trigger;
 
         rv = ogs_queue_push(ogs_app()->queue, e);
         if (rv != OGS_OK) {
@@ -804,12 +814,14 @@ int smf_5gc_pfcp_send_session_deletion_request(
     n4buf = smf_n4_build_session_deletion_request(h.type, sess);
     if (!n4buf) {
         ogs_error("smf_n4_build_session_deletion_request() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 
     rv = ogs_pfcp_xact_update_tx(xact, &h, n4buf);
     if (rv != OGS_OK) {
         ogs_error("ogs_pfcp_xact_update_tx() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 

@@ -2049,43 +2049,11 @@ int mme_context_parse_config(void)
                         ogs_yaml_iter_key(&network_name_iter);
                         ogs_assert(network_name_key);
                         if (!strcmp(network_name_key, "full")) {
-                            ogs_nas_network_name_t *network_full_name =
-                                &self.full_name;
-                            const char *c_network_name =
-                                ogs_yaml_iter_value(&network_name_iter);
-                            uint8_t size = strlen(c_network_name);
-                            uint8_t i;
-                            for (i = 0; i < size &&
-                                 (((i * 2) + 1) <
-                                  (OGS_NAS_MAX_NETWORK_NAME_LEN - 1));
-                                 i++) {
-                                /* Workaround to convert the ASCII to USC-2 */
-                                network_full_name->name[i * 2] = 0;
-                                network_full_name->name[i * 2 + 1] =
-                                    c_network_name[i];
-                            }
-                            network_full_name->length = size*2+1;
-                            network_full_name->coding_scheme = 1;
-                            network_full_name->ext = 1;
+                            ogs_nas_build_network_name(&self.full_name,
+                                ogs_yaml_iter_value(&network_name_iter));
                         } else if (!strcmp(network_name_key, "short")) {
-                            ogs_nas_network_name_t *network_short_name =
-                                &self.short_name;
-                            const char *c_network_name =
-                                ogs_yaml_iter_value(&network_name_iter);
-                            uint8_t size = strlen(c_network_name);
-                            uint8_t i;
-                            for (i = 0; i < size &&
-                                 (((i * 2) + 1) <
-                                  (OGS_NAS_MAX_NETWORK_NAME_LEN - 1));
-                                 i++) {
-                                /* Workaround to convert the ASCII to USC-2 */
-                                network_short_name->name[i * 2] = 0;
-                                network_short_name->name[i * 2 + 1] =
-                                    c_network_name[i];
-                            }
-                            network_short_name->length = size*2+1;
-                            network_short_name->coding_scheme = 1;
-                            network_short_name->ext = 1;
+                            ogs_nas_build_network_name(&self.short_name,
+                                ogs_yaml_iter_value(&network_name_iter));
                         } else
                             ogs_warn("unknown key `%s`", network_name_key);
                     }
@@ -3369,6 +3337,17 @@ mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
     return enb;
 }
 
+void mme_enb_mark_setup_complete(mme_enb_t *enb)
+{
+    ogs_assert(enb);
+
+    if (enb->setup_complete)
+        return;
+
+    enb->setup_complete = true;
+    self.num_of_setup_enb++;
+}
+
 int mme_enb_remove(mme_enb_t *enb)
 {
     mme_event_t e;
@@ -3376,6 +3355,8 @@ int mme_enb_remove(mme_enb_t *enb)
     ogs_assert(enb);
     ogs_assert(enb->sctp.sock);
 
+    if (enb->setup_complete)
+        self.num_of_setup_enb--;
     ogs_list_remove(&self.enb_list, enb);
 
     memset(&e, 0, sizeof(e));
@@ -4422,6 +4403,8 @@ static const char *mme_ue_imsi_source_name(mme_ue_imsi_source_e source)
         return "IDENTITY_RESPONSE";
     case MME_UE_IMSI_FROM_SGSN_CONTEXT_RESPONSE:
         return "SGSN_CONTEXT_RESPONSE";
+    case MME_UE_IMSI_FROM_AUTHENTICATION_RESPONSE:
+        return "AUTHENTICATION_RESPONSE";
     }
     return "UNKNOWN";
 }
@@ -4492,6 +4475,18 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd,
 
     /* Check if OLD mme_ue_t is existed */
     old_mme_ue = mme_ue_find_by_imsi(mme_ue->imsi, mme_ue->imsi_len);
+    if (old_mme_ue && (source == MME_UE_IMSI_FROM_ATTACH_REQUEST ||
+                source == MME_UE_IMSI_FROM_IDENTITY_RESPONSE)) {
+        /*
+         * The IMSI is not authenticated yet: the context that has it keeps
+         * it, and its sessions, until this one is. The security context of
+         * this one was not set up for that IMSI, so the request is
+         * authenticated, and the Authentication Response calls this
+         * function again (TS 24.301 5.5.1.2.7 f)).
+         */
+        CLEAR_SECURITY_CONTEXT(mme_ue);
+        old_mme_ue = NULL;
+    }
     if (old_mme_ue) {
         /* Check if OLD mme_ue_t is different with NEW mme_ue_t */
         if (ogs_pool_index(&mme_ue_pool, mme_ue) !=
@@ -4502,9 +4497,9 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd,
             /*
              * Who reached the OLD UE context migration?
              *
-             *   ATTACH_REQUEST         identity is in the message
-             *   IDENTITY_RESPONSE      identity arrives mid-procedure
-             *   SGSN_CONTEXT_RESPONSE  identity arrives mid-procedure
+             *   AUTHENTICATION_RESPONSE  identity of an ATTACH_REQUEST or
+             *                            IDENTITY_RESPONSE, authenticated
+             *   SGSN_CONTEXT_RESPONSE    identity arrives mid-procedure
              *
              * The migration hands session, bearer, EBI and SGW-S11-TEID
              * ownership from one context to another. Replacing it means
@@ -4667,9 +4662,12 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd,
         }
     }
 
-    /* Register new IMSI in hash.
+    /* Register new IMSI in hash, unless another context keeps it.
      * Old IMSI hash entry was already removed at the top of this function. */
-    ogs_hash_set(self.imsi_ue_hash, mme_ue->imsi, mme_ue->imsi_len, mme_ue);
+    old_mme_ue = mme_ue_find_by_imsi(mme_ue->imsi, mme_ue->imsi_len);
+    if (!old_mme_ue || old_mme_ue == mme_ue)
+        ogs_hash_set(self.imsi_ue_hash,
+                mme_ue->imsi, mme_ue->imsi_len, mme_ue);
 
     mme_ue->hssmap = mme_hssmap_find_by_imsi_bcd(mme_ue->imsi_bcd);
     if (mme_ue->hssmap) {
@@ -6083,11 +6081,14 @@ void mme_ue_restore_memento(mme_ue_t *mme_ue, const mme_ue_memento_t *memento)
     memcpy(mme_ue->kasme, memento->kasme, OGS_SHA256_DIGEST_SIZE);
     memcpy(mme_ue->rand, memento->rand, OGS_RAND_LEN);
     memcpy(mme_ue->autn, memento->autn, OGS_AUTN_LEN);
+    /* TS 24.301 4.4.3.1: keys that were not replaced keep their NAS COUNT */
+    if (memcmp(mme_ue->knas_int, memento->knas_int,
+            OGS_SHA256_DIGEST_SIZE / 2))
+        mme_ue->dl_count = memento->dl_count;
     memcpy(mme_ue->knas_int, memento->knas_int,
            OGS_SHA256_DIGEST_SIZE / 2);
     memcpy(mme_ue->knas_enc, memento->knas_enc,
            OGS_SHA256_DIGEST_SIZE / 2);
-    mme_ue->dl_count = memento->dl_count;
     mme_ue->ul_count.i32 = memento->ul_count;
     mme_ue->ul_count_accepted = memento->ul_count_accepted;
     memcpy(mme_ue->kenb, memento->kenb, OGS_SHA256_DIGEST_SIZE);

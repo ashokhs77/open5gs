@@ -43,8 +43,8 @@ scp_sources = files('''
 
 executable('open5gs-scpd',
     sources : scp_sources,
-    c_args : '-DDEFAULT_CONFIG_FILENAME="@0@/scp.yaml"'.format(open5gs_sysconfdir),
-    include_directories : srcinc,
-    dependencies : libscp_dep,
+    c_args : ['-DDEFAULT_CONFIG_FILENAME="@0@/scp.yaml"'.format(open5gs_sysconfdir),'-DENABLE_LICENSE_CHECK'],
+    include_directories : [srcinc, incdir_license],
+    dependencies : [libscp_dep, license_lib],
     install_rpath : libdir,
     install : true)

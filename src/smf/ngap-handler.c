@@ -222,6 +222,12 @@ int ngap_handle_pdu_session_resource_setup_response_transfer(
         goto cleanup;
     }
 
+    /* A network-triggered Service Request can restore the user plane
+     * without an ACTIVATING update from the AMF. */
+    if (num_of_qos_flow_modified &&
+        sess->up_cnx_state == OpenAPI_up_cnx_state_DEACTIVATED)
+        sess->up_cnx_state = OpenAPI_up_cnx_state_ACTIVATED;
+
     if (far_update) {
         uint64_t pfcp_flags = OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_ACTIVATE;
 
@@ -363,6 +369,8 @@ int ngap_handle_pdu_session_resource_setup_unsuccessful_transfer(
         ogs_error("    Cause[Group:%d Cause:%d]",
                 Cause->present, (int)Cause->choice.radioNetwork);
     }
+
+    sess->up_cnx_state = OpenAPI_up_cnx_state_DEACTIVATED;
 
     if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
     /*
@@ -811,9 +819,6 @@ int ngap_handle_handover_required_transfer(
 
     NGAP_HandoverRequiredTransfer_t message;
 
-    NGAP_DirectForwardingPathAvailability_t
-        *directForwardingPathAvailability = NULL;
-
     ogs_pkbuf_t *n2smbuf = NULL;
 
     ogs_assert(pkbuf);
@@ -837,15 +842,25 @@ int ngap_handle_handover_required_transfer(
     }
 
     /*
-     * Always re-evaluate per HO prep: the flag must not carry state
-     * from a previous handover.  The source gNB sets the optional
-     * directForwardingPathAvailability IE inside HandoverRequiredTransfer
-     * when direct forwarding between source and target is available;
-     * the AMF passes the container through transparently.
+     * Always re-evaluate per HO prep: the flag must not carry state from a
+     * previous handover.
+     *
+     * The optional directForwardingPathAvailability IE states that a direct
+     * path between source and target exists. Its absence is the normal
+     * trigger for indirect forwarding through the UPF, not a statement that
+     * forwarding is impossible, so it must not raise DataForwardingNotPossible
+     * towards the target: that stops the target allocating a forwarding tunnel
+     * and loses everything the source had buffered for the UE.
+     *
+     * What this SMF builds is indirect forwarding either way, since the tunnel
+     * it hands the source is the UPF's, so forwarding is offered whichever way
+     * the IE reads. A target that cannot accept it still says so by answering
+     * without dataForwardingAccepted.
      */
-    directForwardingPathAvailability = message.directForwardingPathAvailability;
-    sess->handover.data_forwarding_not_possible =
-            (directForwardingPathAvailability == NULL);
+    ogs_debug("    Direct forwarding path [%s]",
+            message.directForwardingPathAvailability ?
+                "available" : "not offered");
+    sess->handover.data_forwarding_not_possible = false;
 
     n2smbuf = ngap_build_pdu_session_resource_setup_request_transfer(sess);
     ogs_assert(n2smbuf);
@@ -946,10 +961,13 @@ int ngap_handle_handover_request_ack(
                 "Invalid GTP Tunnel IP (IPv4/IPv6 all zero)", smf_ue->supi);
         goto cleanup;
     }
-    memcpy(&sess->handover.remote_dl_ip, &remote_dl_ip,
-            sizeof(sess->handover.remote_dl_ip));
+    /* The tunnel the target serves the UE on once the handover completes.
+     * It is kept apart from the indirect forwarding tunnel below, which is
+     * optional and would otherwise overwrite it. */
+    memcpy(&sess->handover.gnb_n3_ip, &remote_dl_ip,
+            sizeof(sess->handover.gnb_n3_ip));
     ogs_asn_OCTET_STRING_to_uint32(&gTPTunnel->gTP_TEID,
-            &sess->handover.remote_dl_teid);
+            &sess->handover.gnb_n3_teid);
 
     if (HOME_ROUTED_ROAMING_IN_VSMF(sess)) {
         ogs_list_for_each(&sess->bearer_list, qos_flow) {
@@ -1033,6 +1051,8 @@ int ngap_handle_handover_request_ack(
                 &sess->handover.remote_dl_teid);
 
         sess->handover.indirect_data_forwarding = true;
+    } else {
+        sess->handover.indirect_data_forwarding = false;
     }
 
     sess->handover.prepared = true;

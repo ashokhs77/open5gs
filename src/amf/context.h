@@ -111,6 +111,7 @@ typedef struct amf_context_s {
     uint64_t        amf_ue_ngap_id; /* amf_ue_ngap_id generator */
 
     ogs_list_t      gnb_list;       /* GNB NGAP Client List */
+    unsigned int    num_of_setup_gnb; /* Associations admitted by NG Setup */
     ogs_list_t      amf_ue_list;
 
     ogs_hash_t      *gnb_addr_hash; /* hash table for GNB Address */
@@ -146,6 +147,7 @@ typedef struct amf_gnb_s {
 
     ogs_fsm_t       sm;         /* A state machine */
 
+    bool            setup_complete;
     bool            gnb_id_presence;
     uint32_t        gnb_id;     /* gNB_ID received from gNB */
     uint8_t         gnb_id_length; /* gNB-ID BIT STRING length(22..32) */
@@ -157,10 +159,6 @@ typedef struct amf_gnb_s {
     char            ran_node_name[64];
     ogs_plmn_id_t   plmn_id;    /* gNB PLMN-ID received from gNB */
     ogs_sctp_sock_t sctp;       /* SCTP socket */
-
-    struct {
-        bool ng_setup_success;  /* gNB NGAP Setup complete successfuly */
-    } state;
 
     int             max_num_of_ostreams;/* SCTP Max num of outbound streams */
     uint16_t        ostream_id;         /* gnb_ostream_id generator */
@@ -477,6 +475,8 @@ struct amf_ue_s {
     } while(0)
     int             security_context_available;
     int             mac_failed;
+    /* The secure exchange of NAS messages is established on the connection */
+    bool            integrity_verified;
 
     /* Authentication synch failure counter */
     uint8_t auth_synch_fail_count;
@@ -502,14 +502,6 @@ struct amf_ue_s {
     bool send_ue_security_capability_in_path_switch_ack;
 #define CHECK_5G_AKA_CONFIRMATION(__aMF) \
     ((__aMF) && ((__aMF)->confirmation_for_5g_aka.resource_uri))
-#define STORE_5G_AKA_CONFIRMATION(__aMF, __rESOURCE_URI) \
-    do { \
-        ogs_assert((__aMF)); \
-        CLEAR_5G_AKA_CONFIRMATION(__aMF); \
-        (__aMF)->confirmation_for_5g_aka.resource_uri = \
-            ogs_strdup(__rESOURCE_URI); \
-        ogs_assert((__aMF)->confirmation_for_5g_aka.resource_uri); \
-    } while(0)
 #define CLEAR_5G_AKA_CONFIRMATION(__aMF) \
     do { \
         ogs_assert((__aMF)); \
@@ -517,9 +509,20 @@ struct amf_ue_s {
             ogs_free((__aMF)->confirmation_for_5g_aka.resource_uri); \
         (__aMF)->confirmation_for_5g_aka.resource_uri = NULL; \
     } while(0)
+#define CLEAR_5G_AKA_PENDING(__aMF) \
+    do { \
+        ogs_assert((__aMF)); \
+        if ((__aMF)->confirmation_for_5g_aka.pending_uri) \
+            ogs_free((__aMF)->confirmation_for_5g_aka.pending_uri); \
+        (__aMF)->confirmation_for_5g_aka.pending_uri = NULL; \
+    } while(0)
     struct {
-        char *resource_uri;
-        ogs_sbi_client_t *client;
+        char *resource_uri; /* Confirmed context for deregistration. */
+        char *pending_uri;  /* Challenge awaiting confirmation. */
+        ogs_pool_id_t xact_id;
+        uint8_t auts[OGS_AUTS_LEN]; /* Retry after the failure PUT completes. */
+        ogs_sbi_client_t *client; /* Current vector endpoint. */
+        ogs_sbi_client_t *confirmed_client; /* Keep DELETE endpoint alive. */
     } confirmation_for_5g_aka;
     /* Random challenge value */
     uint8_t         rand[OGS_RAND_LEN];
@@ -840,7 +843,11 @@ typedef struct amf_sess_s {
     } sm_context;
 
     bool pdu_session_release_complete_received;
-    bool pdu_session_resource_release_response_received;
+    /* The RAN has answered, or the SMF requested only N1. */
+    bool pdu_session_resource_release_complete;
+
+    /* PDUSessionResourceSetupRequest sent, its response not yet */
+    bool pdu_session_resource_setup_request_pending;
 
     /* SMF sends the REQUEST
      * of [POST] /namf-comm/v1/ue-contexts/{supi}/n1-n2-messages */
@@ -891,6 +898,7 @@ typedef struct amf_sess_s {
         ogs_pkbuf_t *pdu_session_resource_setup_request;
         ogs_pkbuf_t *pdu_session_resource_modification_command;
         ogs_pkbuf_t *path_switch_request_ack;
+        ogs_pkbuf_t *path_switch_request_unsuccessful;
         ogs_pkbuf_t *handover_request;
         ogs_pkbuf_t *handover_command;
     } transfer;
@@ -995,7 +1003,7 @@ typedef struct amf_sess_s {
         } \
         (__sESS)->gsm_message.n2buf = __n2Buf; \
         \
-        ogs_assert((__sESS)->gsm_message.n2buf); \
+        ogs_assert((__sESS)->gsm_message.n1buf || (__sESS)->gsm_message.n2buf); \
         \
         (__sESS)->gsm_message.type = __tYPE; \
     } while(0);
@@ -1099,6 +1107,7 @@ int amf_context_parse_config(void);
 int amf_context_nf_info(void);
 
 amf_gnb_t *amf_gnb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr);
+void amf_gnb_mark_setup_complete(amf_gnb_t *gnb);
 void amf_gnb_remove(amf_gnb_t *gnb);
 void amf_gnb_remove_all(void);
 amf_gnb_t *amf_gnb_find_by_addr(ogs_sockaddr_t *addr);
