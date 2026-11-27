@@ -787,12 +787,14 @@ void smf_qos_flow_binding(smf_sess_t *sess)
                     pcc_rule->qos.gbr.downlink || pcc_rule->qos.gbr.uplink) {
 
                     /*
-                     * If new packet filters are being added, or if any MBR/GBR
-                     * field differs from what is currently set, then we must
-                     * update the QoS parameters.
+                     * Only a changed MBR/GBR value is a QoS change. New or
+                     * replaced packet filters alone change the QoS rule, not
+                     * the QoS flow: they go in the QoS rules IE (TS 24.501
+                     * 9.11.4.13) without a QoS flow description modify
+                     * (9.11.4.12) and without re-sending the QoS flow to the
+                     * RAN (TS 23.502 4.3.3.2).
                      */
-                    if ((ogs_list_count(&qos_flow->pf_to_add_list) > 0) ||
-                        (qos_flow->qos.mbr.downlink != pcc_rule->qos.mbr.downlink) ||
+                    if ((qos_flow->qos.mbr.downlink != pcc_rule->qos.mbr.downlink) ||
                         (qos_flow->qos.mbr.uplink != pcc_rule->qos.mbr.uplink) ||
                         (qos_flow->qos.gbr.downlink != pcc_rule->qos.gbr.downlink) ||
                         (qos_flow->qos.gbr.uplink != pcc_rule->qos.gbr.uplink)) {
