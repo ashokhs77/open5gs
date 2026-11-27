@@ -225,6 +225,9 @@ ED3(uint8_t spare:2;,
     uint32_t sdf_filter_id;         /* SDF Filter ID */
 
     uint8_t *identifier_node;       /* Pool-Node for Identifier */
+    /* identifier_node is from sess->pf_identifier_pool (5GC) instead of
+     * bearer->pf_identifier_pool (EPC) */
+    bool identifier_in_sess_pool;
     uint8_t *precedence_node;       /* Pool-Node for Precedence */
 
     ogs_ipfw_rule_t ipfw_rule;
@@ -283,6 +286,20 @@ typedef struct smf_bearer_s {
 
     uint8_t num_of_pf_to_delete;
     uint8_t pf_to_delete[OGS_MAX_NUM_OF_FLOW_IN_NAS];
+
+    /*
+     * 5GC network-requested QoS flow binding (smf_qos_flow_binding()):
+     * what this flow needs in the PDU Session Modification being built, so
+     * that a new QoS flow and changes to existing ones can be sent in one
+     * PDU Session Modification Command, one N2 PDU Session Resource Modify
+     * Request Transfer and one PFCP Session Modification Request, each flow
+     * with its own operation (TS 24.501 9.11.4.12/9.11.4.13, TS 38.413
+     * 9.3.4.3, TS 29.244 7.5.4). Valid only while sess->qos_binding_active
+     * and binding_seq == sess->qos_binding_seq.
+     */
+    uint32_t        binding_seq;
+    bool            binding_existing;   /* set up before this binding */
+    uint64_t        binding_flags;      /* TFT_ADD/TFT_REPLACE/QOS_MODIFY */
 
     ogs_pool_id_t   sess_id;
 } smf_bearer_t;
@@ -345,6 +362,12 @@ typedef struct smf_sess_s {
     char            *s6b_sid;       /* S6b Session ID */
 
     OGS_POOL(pf_precedence_pool, uint8_t);
+    /*
+     * 5GC: packet filter identifiers unique within the PDU session (all QoS
+     * rules), ID 1 held for the default QoS rule's match-all filter.
+     */
+    OGS_POOL(pf_identifier_pool, uint8_t);
+    uint8_t *pf_identifier_default_node;
 
 #define CLEAR_QOS_FLOW_ID(__sESS) \
     do { \
@@ -693,6 +716,10 @@ typedef struct smf_sess_s {
     ogs_list_t      pdr_to_modify_list;
     ogs_list_t      qos_flow_to_modify_list;
 
+    /* See smf_bearer_t binding_seq */
+    uint32_t        qos_binding_seq;
+    bool            qos_binding_active;
+
     ogs_gtp_node_t  *gnode;
     ogs_pfcp_node_t *pfcp_node;
 
@@ -843,6 +870,11 @@ void smf_pf_identifier_pool_final(smf_bearer_t *bearer);
 
 void smf_pf_precedence_pool_init(smf_sess_t *sess);
 void smf_pf_precedence_pool_final(smf_sess_t *sess);
+void smf_sess_pf_identifier_pool_init(smf_sess_t *sess);
+void smf_sess_pf_identifier_pool_final(smf_sess_t *sess);
+
+/* Per-flow view of a 5GC network-requested QoS flow binding */
+bool smf_qos_flow_binding_valid(smf_sess_t *sess, smf_bearer_t *qos_flow);
 
 int smf_integrity_protection_indication_value2enum(const char *value);
 int smf_confidentiality_protection_indication_value2enum(const char *value);

@@ -401,6 +401,25 @@ ogs_pkbuf_t *smf_n4_build_qos_flow_to_modify_list(
 
     ogs_list_for_each_entry(
             &sess->qos_flow_to_modify_list, qos_flow, to_modify_node) {
+        /*
+         * 5GC network-requested binding: a flow set up before this binding
+         * is updated (Update PDR/QER), not created again, also when a new
+         * QoS flow is created in the same request (TS 29.244 7.5.4).
+         */
+        uint64_t global_flags = modify_flags;
+        uint64_t modify_flags = global_flags;
+
+        if ((global_flags & OGS_PFCP_MODIFY_NETWORK_REQUESTED) &&
+            !(global_flags & OGS_PFCP_MODIFY_REMOVE) &&
+            smf_qos_flow_binding_valid(sess, qos_flow)) {
+            modify_flags &= ~(OGS_PFCP_MODIFY_TFT_ADD|
+                              OGS_PFCP_MODIFY_TFT_REPLACE|
+                              OGS_PFCP_MODIFY_QOS_MODIFY);
+            if (qos_flow->binding_existing == true) {
+                modify_flags &= ~OGS_PFCP_MODIFY_CREATE;
+                modify_flags |= qos_flow->binding_flags;
+            }
+        }
 
         if (modify_flags & OGS_PFCP_MODIFY_REMOVE) {
             /* Remove PDR */

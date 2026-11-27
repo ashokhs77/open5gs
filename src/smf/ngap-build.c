@@ -530,9 +530,38 @@ ogs_pkbuf_t *ngap_build_pdu_session_resource_modify_request_transfer(
         }
 
     } else {
+        /*
+         * 5GC network-requested binding: the RAN gets the QoS flows to add,
+         * and existing flows only if their QoS profile changes. Packet
+         * filters are for the UE (NAS) and the UPF (PFCP) only (TS 23.502
+         * 4.3.3.2, TS 38.413 9.3.4.3). Re-sending an unchanged voice flow
+         * made the RAN reconfigure its DRB in the middle of the call on the
+         * audio->video upgrade. If no flow would be left (filter-only
+         * change), all of them are sent as before, so the list keeps at
+         * least one item.
+         */
+        bool ran_skip_unchanged = false;
+
+        ogs_list_for_each_entry(&sess->qos_flow_to_modify_list,
+                                 qos_flow, to_modify_node) {
+            if (!smf_qos_flow_binding_valid(sess, qos_flow) ||
+                qos_flow->binding_existing == false ||
+                (qos_flow->binding_flags & OGS_PFCP_MODIFY_QOS_MODIFY)) {
+                ran_skip_unchanged = true;
+                break;
+            }
+        }
+
         /* Default: iterate modify-list */
         ogs_list_for_each_entry(&sess->qos_flow_to_modify_list,
                                  qos_flow, to_modify_node) {
+            bool by_binding = smf_qos_flow_binding_valid(sess, qos_flow);
+
+            if (ran_skip_unchanged == true && by_binding == true &&
+                qos_flow->binding_existing == true &&
+                !(qos_flow->binding_flags & OGS_PFCP_MODIFY_QOS_MODIFY))
+                continue;
+
             QosFlowAddOrModifyRequestItem =
                 CALLOC(1, sizeof(*QosFlowAddOrModifyRequestItem));
             ogs_assert(QosFlowAddOrModifyRequestItem);
@@ -545,9 +574,13 @@ ogs_pkbuf_t *ngap_build_pdu_session_resource_modify_request_transfer(
                     CALLOC(1, sizeof(NGAP_QosFlowLevelQosParameters_t));
             ogs_assert(
                     QosFlowAddOrModifyRequestItem->qosFlowLevelQosParameters);
+            /*
+             * TS 38.413 9.3.1.12: GBR QoS Flow Information is present for a
+             * GBR QoS flow (C-ifGBRflow); always so in binding mode.
+             */
             fill_qos_level_parameters(
                     QosFlowAddOrModifyRequestItem->qosFlowLevelQosParameters,
-                    &qos_flow->qos, include_gbr);
+                    &qos_flow->qos, include_gbr || by_binding);
         }
     }
 

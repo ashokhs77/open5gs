@@ -1036,6 +1036,7 @@ void smf_5gc_n4_handle_session_modification_response(
                 ngap_build_pdu_session_resource_modify_request_transfer(
                         sess, true);
             ogs_assert(param.n2smbuf);
+            sess->qos_binding_active = false;
 
             smf_namf_comm_send_n1_n2_message_transfer(sess, NULL, &param);
 
@@ -1082,6 +1083,7 @@ void smf_5gc_n4_handle_session_modification_response(
                     sess,
                     (flags & OGS_PFCP_MODIFY_QOS_MODIFY) ? true : false);
             ogs_assert(param.n2smbuf);
+            sess->qos_binding_active = false;
 
             smf_namf_comm_send_n1_n2_message_transfer(sess, NULL, &param);
 

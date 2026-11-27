@@ -542,9 +542,16 @@ void smf_qos_flow_binding(smf_sess_t *sess)
 
     ogs_list_init(&sess->qos_flow_to_modify_list);
 
+    /* New binding: the binding_* fields of earlier ones are stale */
+    sess->qos_binding_seq++;
+    if (sess->qos_binding_seq == 0)
+        sess->qos_binding_seq = 1;
+    sess->qos_binding_active = true;
+
     for (i = 0; i < sess->policy.num_of_pcc_rule; i++) {
         smf_bearer_t *qos_flow = NULL;
         ogs_pcc_rule_t *pcc_rule = &sess->policy.pcc_rule[i];
+        bool pf_replaced = false;
 
         ogs_assert(pcc_rule);
         if (pcc_rule->id == NULL) {
@@ -626,11 +633,46 @@ void smf_qos_flow_binding(smf_sess_t *sess)
                 qos_flow_created = true;
             }
 
+            /*
+             * A PCC rule provided again with flow information replaces the
+             * rule's service data flow filters (TS 29.512 4.2.3.x/4.2.4.x:
+             * PCC rule modification). Adding only kept every earlier filter:
+             * on an audio->video re-INVITE rtpengine moved the audio leg to
+             * new ports, and the audio QoS rule got packet filters 5-8 next
+             * to the stale 1-4. A PCC rule provided without flow information
+             * keeps its filters. Same as smf_bearer_binding() for EPC.
+             */
+            if (qos_flow_created == false && pcc_rule->num_of_flow > 0) {
+                int num_of_match = 0;
+
+                for (j = 0; j < pcc_rule->num_of_flow; j++) {
+                    ogs_flow_t *flow = &pcc_rule->flow[j];
+                    if (flow && flow->description && smf_pf_find_by_flow(
+                                qos_flow, flow->direction, flow->description))
+                        num_of_match++;
+                }
+
+                if (num_of_match != pcc_rule->num_of_flow ||
+                    ogs_list_count(&qos_flow->pf_list) !=
+                        pcc_rule->num_of_flow) {
+                    ogs_info("PCC rule [%s] QFI[%d] flows changed "
+                            "(%d of %d matched, %d installed) - "
+                            "replacing packet filters",
+                            pcc_rule->id, qos_flow->qfi, num_of_match,
+                            pcc_rule->num_of_flow,
+                            ogs_list_count(&qos_flow->pf_list));
+                    smf_pf_remove_all(qos_flow);
+                    pf_replaced = true;
+                }
+            }
+
         /*
-         * We only use the method of adding a flow to an existing tft.
+         * Only filters not yet installed are added (all of them after a
+         * replace above).
          *
          * EPC: OGS_GTP2_TFT_CODE_ADD_PACKET_FILTERS_TO_EXISTING_TFT
-         * 5GC: OGS_NAS_QOS_CODE_MODIFY_EXISTING_QOS_RULE_AND_ADD_PACKET_FILTERS
+         * 5GC: OGS_NAS_QOS_CODE_MODIFY_EXISTING_QOS_RULE_AND_ADD_PACKET_FILTERS,
+         *      ..._AND_REPLACE_ALL_PACKET_FILTERS after a replace
          */
             ogs_list_init(&qos_flow->pf_to_add_list);
 
@@ -773,6 +815,7 @@ void smf_qos_flow_binding(smf_sess_t *sess)
 
             if (qos_flow_created == false &&
                 qos_presence == false &&
+                pf_replaced == false &&
                 ogs_list_count(&qos_flow->pf_to_add_list) == 0) {
                 ogs_warn("No need to send 'Session Modification Request'");
                 ogs_warn("qos_flow_created:%d, qos_presence:%d, rule_count:%d",
@@ -781,25 +824,38 @@ void smf_qos_flow_binding(smf_sess_t *sess)
                 continue;
             }
 
+            qos_flow->binding_seq = sess->qos_binding_seq;
+
             if (qos_flow_created == true) {
                 smf_bearer_tft_update(qos_flow);
                 smf_bearer_qos_update(qos_flow);
+
+                qos_flow->binding_existing = false;
+                qos_flow->binding_flags = 0;
 
                 pfcp_flags |= OGS_PFCP_MODIFY_CREATE;
 
                 ogs_list_add(&sess->qos_flow_to_modify_list,
                                 &qos_flow->to_modify_node);
             } else {
+                qos_flow->binding_existing = true;
+                qos_flow->binding_flags = 0;
+
                 pfcp_flags |= OGS_PFCP_MODIFY_NETWORK_REQUESTED;
 
-                if (ogs_list_count(&qos_flow->pf_to_add_list) > 0) {
-                    pfcp_flags |= OGS_PFCP_MODIFY_TFT_ADD;
+                if (pf_replaced == true) {
+                    qos_flow->binding_flags |= OGS_PFCP_MODIFY_TFT_REPLACE;
+                    smf_bearer_tft_update(qos_flow);
+                } else if (ogs_list_count(&qos_flow->pf_to_add_list) > 0) {
+                    qos_flow->binding_flags |= OGS_PFCP_MODIFY_TFT_ADD;
                     smf_bearer_tft_update(qos_flow);
                 }
                 if (qos_presence == true) {
-                    pfcp_flags |= OGS_PFCP_MODIFY_QOS_MODIFY;
+                    qos_flow->binding_flags |= OGS_PFCP_MODIFY_QOS_MODIFY;
                     smf_bearer_qos_update(qos_flow);
                 }
+
+                pfcp_flags |= qos_flow->binding_flags;
 
                 ogs_list_add(&sess->qos_flow_to_modify_list,
                                 &qos_flow->to_modify_node);
@@ -831,6 +887,15 @@ void smf_qos_flow_binding(smf_sess_t *sess)
         ogs_fatal("Invalid flags[%d]", (int)pfcp_flags);
         ogs_assert_if_reached();
     }
+
+    /*
+     * A new QoS flow together with changes to existing ones: keep the
+     * CREATE path (n4-handler) and let each existing flow's binding_flags
+     * select its own PFCP update and NAS operation.
+     */
+    if (pfcp_flags & OGS_PFCP_MODIFY_CREATE)
+        pfcp_flags &= ~(OGS_PFCP_MODIFY_TFT_ADD|OGS_PFCP_MODIFY_TFT_REPLACE|
+                        OGS_PFCP_MODIFY_QOS_MODIFY);
 
     if (ogs_list_count(&sess->qos_flow_to_modify_list)) {
         ogs_assert(OGS_OK ==

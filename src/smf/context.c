@@ -1497,6 +1497,7 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
     ogs_pfcp_pool_init(&sess->pfcp);
     smf_qfi_pool_init(sess);
     smf_pf_precedence_pool_init(sess);
+    smf_sess_pf_identifier_pool_init(sess);
 
     sess->index = ogs_pool_index(&smf_sess_pool, sess);
     ogs_assert(sess->index > 0 && sess->index <= ogs_app()->pool.sess);
@@ -1745,6 +1746,7 @@ smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi)
     ogs_pfcp_pool_init(&sess->pfcp);
     smf_qfi_pool_init(sess);
     smf_pf_precedence_pool_init(sess);
+    smf_sess_pf_identifier_pool_init(sess);
 
     sess->index = ogs_pool_index(&smf_sess_pool, sess);
     ogs_assert(sess->index > 0 && sess->index <= ogs_app()->pool.sess);
@@ -2261,6 +2263,7 @@ void smf_sess_remove(smf_sess_t *sess)
     ogs_pfcp_pool_final(&sess->pfcp);
     smf_qfi_pool_final(sess);
     smf_pf_precedence_pool_final(sess);
+    smf_sess_pf_identifier_pool_final(sess);
 
     switch (sess->gtp.version) {
     case 1:
@@ -3292,7 +3295,29 @@ smf_pf_t *smf_pf_add(smf_bearer_t *bearer)
     ogs_pool_id_calloc(&smf_pf_pool, &pf);
     ogs_assert(pf);
 
-    ogs_pool_alloc(&bearer->pf_identifier_pool, &pf->identifier_node);
+    /*
+     * 5GC: take the packet filter identifier from the PDU session pool, so
+     * identifiers are unique across all QoS rules of the session and never
+     * reuse ID 1 of the default QoS rule's match-all filter.
+     *
+     * With a per-QoS-flow pool every dedicated QoS rule restarted at ID 1.
+     * A ViNR call then created rule 2 (QFI 2) and rule 3 (QFI 3) both with
+     * packet filters 1-4, also clashing with the default rule's filter 1.
+     * UEs that key packet filters by identifier within the PDU session lost
+     * their IMS uplink filter when the call's rules were deleted: the IMS
+     * session sent no uplink after a video call ended, and the next call
+     * failed (gNB team trace, Nov 2026). VoNR was not affected since it adds
+     * one dedicated rule only.
+     *
+     * EPC (GTP-C) keeps the per-bearer pool.
+     */
+    if (!sess->epc) {
+        ogs_pool_alloc(&sess->pf_identifier_pool, &pf->identifier_node);
+        pf->identifier_in_sess_pool = true;
+    } else {
+        ogs_pool_alloc(&bearer->pf_identifier_pool, &pf->identifier_node);
+        pf->identifier_in_sess_pool = false;
+    }
     if (!pf->identifier_node) {
         ogs_error("smf_pf_add: Expectation `pf->identifier_node' failed");
         ogs_pool_id_free(&smf_pf_pool, pf);
@@ -3306,7 +3331,10 @@ smf_pf_t *smf_pf_add(smf_bearer_t *bearer)
     ogs_pool_alloc(&sess->pf_precedence_pool, &pf->precedence_node);
     if (!pf->precedence_node) {
         ogs_error("smf_pf_add: Expectation `pf->precedence_node' failed");
-        ogs_pool_free(&bearer->pf_identifier_pool, pf->identifier_node);
+        if (pf->identifier_in_sess_pool)
+            ogs_pool_free(&sess->pf_identifier_pool, pf->identifier_node);
+        else
+            ogs_pool_free(&bearer->pf_identifier_pool, pf->identifier_node);
         ogs_pool_id_free(&smf_pf_pool, pf);
         return NULL;
     }
@@ -3340,8 +3368,12 @@ int smf_pf_remove(smf_pf_t *pf)
     if (pf->flow_description)
         ogs_free(pf->flow_description);
 
-    if (pf->identifier_node)
-        ogs_pool_free(&bearer->pf_identifier_pool, pf->identifier_node);
+    if (pf->identifier_node) {
+        if (pf->identifier_in_sess_pool)
+            ogs_pool_free(&sess->pf_identifier_pool, pf->identifier_node);
+        else
+            ogs_pool_free(&bearer->pf_identifier_pool, pf->identifier_node);
+    }
     if (pf->precedence_node)
         ogs_pool_free(
                 &sess->pf_precedence_pool, pf->precedence_node);
@@ -3770,6 +3802,44 @@ void smf_pf_precedence_pool_final(smf_sess_t *sess)
     ogs_assert(sess);
 
     ogs_pool_destroy(&sess->pf_precedence_pool);
+}
+
+void smf_sess_pf_identifier_pool_init(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    ogs_pool_create(&sess->pf_identifier_pool, OGS_MAX_NUM_OF_FLOW_IN_BEARER);
+    ogs_pool_sequence_id_generate(&sess->pf_identifier_pool);
+
+    /*
+     * Hold ID 1: gsm_encode_default_qos_rule() always sends the default QoS
+     * rule's match-all packet filter as ID 1. Dedicated rules get 2..15.
+     */
+    ogs_pool_alloc(&sess->pf_identifier_pool, &sess->pf_identifier_default_node);
+    ogs_assert(sess->pf_identifier_default_node);
+    ogs_assert(*sess->pf_identifier_default_node == 1);
+}
+
+bool smf_qos_flow_binding_valid(smf_sess_t *sess, smf_bearer_t *qos_flow)
+{
+    ogs_assert(sess);
+    ogs_assert(qos_flow);
+
+    return sess->qos_binding_active == true &&
+        qos_flow->binding_seq != 0 &&
+        qos_flow->binding_seq == sess->qos_binding_seq;
+}
+
+void smf_sess_pf_identifier_pool_final(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    if (sess->pf_identifier_default_node) {
+        ogs_pool_free(&sess->pf_identifier_pool,
+                sess->pf_identifier_default_node);
+        sess->pf_identifier_default_node = NULL;
+    }
+    ogs_pool_destroy(&sess->pf_identifier_pool);
 }
 
 static void stats_add_smf_session(void)

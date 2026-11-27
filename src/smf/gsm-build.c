@@ -338,6 +338,48 @@ ogs_pkbuf_t *gsm_build_pdu_session_establishment_reject(
     return ogs_nas_5gs_plain_encode(&message);
 }
 
+/*
+ * 5GC network-requested binding: per-flow operation codes, so a new QoS flow
+ * and changes to existing ones are encoded correctly in one PDU Session
+ * Modification Command (TS 24.501 9.11.4.13 QoS rules, 9.11.4.12 QoS flow
+ * descriptions):
+ *   new flow:       Create new QoS rule / Create new QoS flow description
+ *   existing flow:  Modify existing QoS rule and replace all / add packet
+ *                   filters (only if its filters changed), Modify existing
+ *                   QoS flow description (only if its QoS changed)
+ * A code of 0 leaves the flow out of that IE.
+ */
+static bool binding_codes(smf_sess_t *sess, smf_bearer_t *qos_flow,
+        uint8_t qos_rule_code, uint8_t *rule_code, uint8_t *flow_code)
+{
+    if (qos_rule_code == OGS_NAS_QOS_CODE_DELETE_EXISTING_QOS_RULE)
+        return false;
+    if (!smf_qos_flow_binding_valid(sess, qos_flow))
+        return false;
+
+    if (qos_flow->binding_existing == false) {
+        *rule_code = OGS_NAS_QOS_CODE_CREATE_NEW_QOS_RULE;
+        *flow_code = OGS_NAS_CREATE_NEW_QOS_FLOW_DESCRIPTION;
+        return true;
+    }
+
+    if (qos_flow->binding_flags & OGS_PFCP_MODIFY_TFT_REPLACE)
+        *rule_code =
+            OGS_NAS_QOS_CODE_MODIFY_EXISTING_QOS_RULE_AND_REPLACE_ALL_PACKET_FILTERS;
+    else if (qos_flow->binding_flags & OGS_PFCP_MODIFY_TFT_ADD)
+        *rule_code =
+            OGS_NAS_QOS_CODE_MODIFY_EXISTING_QOS_RULE_AND_ADD_PACKET_FILTERS;
+    else
+        *rule_code = 0;
+
+    if (qos_flow->binding_flags & OGS_PFCP_MODIFY_QOS_MODIFY)
+        *flow_code = OGS_NAS_MODIFY_NEW_QOS_FLOW_DESCRIPTION;
+    else
+        *flow_code = 0;
+
+    return true;
+}
+
 ogs_pkbuf_t *gsm_build_pdu_session_modification_command(
         smf_sess_t *sess,
         uint8_t qos_rule_code, uint8_t qos_flow_description_code)
@@ -423,30 +465,44 @@ ogs_pkbuf_t *gsm_build_pdu_session_modification_command(
     } else if (HOME_ROUTED_ROAMING_IN_HSMF(sess)) {
         ogs_fatal("This should not be invoked from H-SMF during HR-Roaming");
         ogs_assert_if_reached();
-    } else if (qos_rule_code) {
+    } else if (qos_rule_code || sess->qos_binding_active) {
+        bool by_binding = false;
 
         i = 0;
         memset(qos_rule, 0, sizeof(qos_rule));
 
         ogs_list_for_each_entry(
                 &sess->qos_flow_to_modify_list, qos_flow, to_modify_node) {
+            uint8_t code = qos_rule_code, flow_code = 0;
+
+            if (binding_codes(sess, qos_flow, qos_rule_code,
+                        &code, &flow_code) == true)
+                by_binding = true;
+            if (!code)
+                continue;
+
             ogs_assert(i < OGS_MAX_NUM_OF_BEARER);
-            gsm_encode_qos_rule(&qos_rule[i], qos_flow, qos_rule_code);
+            gsm_encode_qos_rule(&qos_rule[i], qos_flow, code);
             i++;
         }
 
-        rv = ogs_nas_build_qos_rules(authorized_qos_rules, qos_rule, i);
-        if (rv != OGS_OK) {
-            ogs_error("ogs_nas_build_qos_rules() failed");
-            return NULL;
-        }
-        if (!authorized_qos_rules->length) {
-            ogs_error("No length");
-            return NULL;
-        }
+        if (i) {
+            rv = ogs_nas_build_qos_rules(authorized_qos_rules, qos_rule, i);
+            if (rv != OGS_OK) {
+                ogs_error("ogs_nas_build_qos_rules() failed");
+                return NULL;
+            }
+            if (!authorized_qos_rules->length) {
+                ogs_error("No length");
+                return NULL;
+            }
 
-        pdu_session_modification_command->presencemask |=
-            OGS_NAS_5GS_PDU_SESSION_MODIFICATION_COMMAND_AUTHORIZED_QOS_RULES_PRESENT;
+            pdu_session_modification_command->presencemask |=
+                OGS_NAS_5GS_PDU_SESSION_MODIFICATION_COMMAND_AUTHORIZED_QOS_RULES_PRESENT;
+        } else if (by_binding == false && qos_rule_code) {
+            ogs_error("No QoS rule to encode");
+            return NULL;
+        }
     }
 
     /* QoS flow descriptions */
@@ -498,34 +554,48 @@ ogs_pkbuf_t *gsm_build_pdu_session_modification_command(
     } else if (HOME_ROUTED_ROAMING_IN_HSMF(sess)) {
         ogs_fatal("This should not be invoked from H-SMF during HR-Roaming");
         ogs_assert_if_reached();
-    } else if (qos_flow_description_code) {
+    } else if (qos_flow_description_code || sess->qos_binding_active) {
+        bool by_binding = false;
 
         i = 0;
         memset(&qos_flow_description, 0, sizeof(qos_flow_description));
 
         ogs_list_for_each_entry(
                 &sess->qos_flow_to_modify_list, qos_flow, to_modify_node) {
+            uint8_t rule_code = 0, code = qos_flow_description_code;
+
+            if (binding_codes(sess, qos_flow, qos_rule_code,
+                        &rule_code, &code) == true)
+                by_binding = true;
+            if (!code)
+                continue;
+
             ogs_assert(i < OGS_MAX_NUM_OF_BEARER);
 
             gsm_encode_qos_flow_description(
-                &qos_flow_description[i], qos_flow, qos_flow_description_code);
+                &qos_flow_description[i], qos_flow, code);
 
             i++;
         }
 
-        rv = ogs_nas_build_qos_flow_descriptions(
-                authorized_qos_flow_descriptions, qos_flow_description, i);
-        if (rv != OGS_OK) {
-            ogs_error("ogs_nas_build_qos_flow_descriptions() failed");
-            return NULL;
-        }
-        if (!authorized_qos_flow_descriptions->length) {
-            ogs_error("No length");
-            return NULL;
-        }
+        if (i) {
+            rv = ogs_nas_build_qos_flow_descriptions(
+                    authorized_qos_flow_descriptions, qos_flow_description, i);
+            if (rv != OGS_OK) {
+                ogs_error("ogs_nas_build_qos_flow_descriptions() failed");
+                return NULL;
+            }
+            if (!authorized_qos_flow_descriptions->length) {
+                ogs_error("No length");
+                return NULL;
+            }
 
-        pdu_session_modification_command->presencemask |=
-            OGS_NAS_5GS_PDU_SESSION_MODIFICATION_COMMAND_AUTHORIZED_QOS_FLOW_DESCRIPTIONS_PRESENT;
+            pdu_session_modification_command->presencemask |=
+                OGS_NAS_5GS_PDU_SESSION_MODIFICATION_COMMAND_AUTHORIZED_QOS_FLOW_DESCRIPTIONS_PRESENT;
+        } else if (by_binding == false && qos_flow_description_code) {
+            ogs_error("No QoS flow description to encode");
+            return NULL;
+        }
     }
 
     pkbuf = ogs_nas_5gs_plain_encode(&message);
