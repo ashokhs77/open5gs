@@ -519,6 +519,26 @@ int ngap_handle_pdu_session_resource_modify_response_transfer(
         goto cleanup;
     }
 
+    /*
+     * No gNB N3 tunnel yet: the N2 PDU session resource setup of this session
+     * has not completed, so no user plane exists to forward downlink to.
+     * Seen after a UE re-requested a PSI that was still active: the AMF made
+     * a new SM context for the PSI, and a late PDUSessionResourceModifyResponse
+     * of the old session (same PSI, QFI 1 exists in every session) reached the
+     * new one. Asserting here killed the SMF and every later registration or
+     * PDU session failed. Keep the DL FARs as they are; the PDU Session
+     * Resource Setup Response activates them for every QoS flow
+     * (TS 23.502 4.3.2.2.1 step 14-16).
+     */
+    if (!sess->remote_dl_ip.ipv4 && !sess->remote_dl_ip.ipv6) {
+        ogs_warn("[%s:%d] PDUSessionResourceModifyResponse before the N3 "
+                "tunnel is set up - no user plane to update",
+                smf_ue->supi, sess->psi);
+        rv = OGS_OK;
+        ogs_assert(true == ogs_sbi_send_http_status_no_content(stream));
+        goto cleanup;
+    }
+
     ogs_list_init(&sess->qos_flow_to_modify_list);
 
     if (qosFlowAddOrModifyResponseList) {
